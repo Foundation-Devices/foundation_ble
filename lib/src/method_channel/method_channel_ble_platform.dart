@@ -13,26 +13,20 @@ abstract class MethodChannelBlePlatform extends BlePlatform {
   factory MethodChannelBlePlatform({
     BleTarget? target,
     BinaryMessenger? binaryMessenger,
-    BleTransport transport = const BleTransport.gatt(),
     BleChannelConfiguration configuration = const BleChannelConfiguration(),
   }) {
-    transport.validate();
-
     final resolvedTarget = target ?? _detectTarget();
     return switch (resolvedTarget) {
       BleTarget.android => _AndroidMethodChannelBlePlatform(
         binaryMessenger: binaryMessenger,
-        transport: transport,
         configuration: configuration,
       ),
       BleTarget.ios => _IosMethodChannelBlePlatform(
         binaryMessenger: binaryMessenger,
-        transport: transport,
         configuration: configuration,
       ),
       BleTarget.macos => _MacosMethodChannelBlePlatform(
         binaryMessenger: binaryMessenger,
-        transport: transport,
         configuration: configuration,
       ),
     };
@@ -300,7 +294,6 @@ abstract base class _MethodChannelBlePlatformBase
   BleConnection createConnection(String deviceId) {
     return MethodChannelBleConnection(
       deviceId: deviceId,
-      transport: const BleTransport.gatt(),
       binaryMessenger: _binaryMessenger,
       configuration: _configuration,
     );
@@ -329,20 +322,14 @@ final class _AndroidMethodChannelBlePlatform
     extends _MethodChannelBlePlatformBase
     implements AndroidBlePlatformCapability {
   _AndroidMethodChannelBlePlatform({
-    required this.transport,
     super.binaryMessenger,
     super.configuration = const BleChannelConfiguration(),
   }) : super(target: BleTarget.android);
 
-  final BleTransport transport;
-
   @override
   Future<List<BleDeviceInfo>> getKnownDevices() async {
-    return _runWithFallback<List<BleDeviceInfo>>(() async {
-      final result = await _invokeTransportAwareMethod<List<dynamic>>(
-        'getConnectedDevices',
-        _transportArguments(),
-      );
+    try {
+      final result = await invokeMethod<List<dynamic>>('getConnectedDevices');
       if (result == null) {
         return const <BleDeviceInfo>[];
       }
@@ -353,7 +340,9 @@ final class _AndroidMethodChannelBlePlatform
                 BleDeviceInfo.fromMap(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false);
-    }, const <BleDeviceInfo>[]);
+    } catch (_) {
+      return const <BleDeviceInfo>[];
+    }
   }
 
   @override
@@ -368,28 +357,30 @@ final class _AndroidMethodChannelBlePlatform
       serviceUuid: serviceUuid,
     );
 
-    return _runWithFallback<bool>(() async {
-      final result = await _invokeTransportAwareMethod<Map<dynamic, dynamic>>(
+    try {
+      final result = await invokeMethod<Map<dynamic, dynamic>>(
         'startScan',
-        _transportArguments(arguments),
+        arguments,
       );
       return result?['scanning'] == true;
-    }, false);
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
   Future<void> prepareDevice(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
+    await invokeMethod<void>(
       'prepareDevice',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
+      <String, Object?>{'deviceId': deviceId},
     );
   }
 
   @override
   Future<void> reconnect(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
+    await invokeMethod<void>(
       'reconnect',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
+      <String, Object?>{'deviceId': deviceId},
     );
   }
 
@@ -397,7 +388,6 @@ final class _AndroidMethodChannelBlePlatform
   BleConnection createConnection(String deviceId) {
     return AndroidMethodChannelBleConnection(
       deviceId: deviceId,
-      transport: transport,
       binaryMessenger: binaryMessenger,
       configuration: configuration,
     );
@@ -415,64 +405,21 @@ final class _AndroidMethodChannelBlePlatform
 
   @override
   Future<void> pair(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
-      'pair',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
-    );
-  }
-
-  Future<T> _runWithFallback<T>(Future<T> Function() action, T fallback) async {
-    try {
-      return await action();
-    } on BleTransportException {
-      rethrow;
-    } catch (_) {
-      return fallback;
-    }
-  }
-
-  Map<String, Object?> _transportArguments([Map<String, Object?>? arguments]) {
-    return <String, Object?>{
-      if (arguments != null) ...arguments,
-      'transport': transport.toMap(),
-    };
-  }
-
-  Future<T?> _invokeTransportAwareMethod<T>(
-    String method, [
-    Object? arguments,
-  ]) async {
-    try {
-      return await invokeMethod<T>(method, arguments);
-    } on PlatformException catch (error) {
-      if (error.code == 'INVALID_TRANSPORT' ||
-          error.code == 'TRANSPORT_UNSUPPORTED') {
-        throw BleTransportException(
-          error.message ?? 'Failed to use ${transport.mode.name} transport',
-        );
-      }
-      rethrow;
-    }
+    await invokeMethod<void>('pair', <String, Object?>{'deviceId': deviceId});
   }
 }
 
 final class _IosMethodChannelBlePlatform extends _MethodChannelBlePlatformBase
     implements IosAccessorySetupCapability {
   _IosMethodChannelBlePlatform({
-    required this.transport,
     super.binaryMessenger,
     super.configuration = const BleChannelConfiguration(),
   }) : super(target: BleTarget.ios);
 
-  final BleTransport transport;
-
   @override
   Future<List<BleDeviceInfo>> getKnownDevices() async {
-    return _runWithFallback<List<BleDeviceInfo>>(() async {
-      final result = await _invokeTransportAwareMethod<List<dynamic>>(
-        'getAccessories',
-        _transportArguments(),
-      );
+    try {
+      final result = await invokeMethod<List<dynamic>>('getAccessories');
       if (result == null) {
         return const <BleDeviceInfo>[];
       }
@@ -483,7 +430,9 @@ final class _IosMethodChannelBlePlatform extends _MethodChannelBlePlatformBase
                 BleDeviceInfo.fromMap(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false);
-    }, const <BleDeviceInfo>[]);
+    } catch (_) {
+      return const <BleDeviceInfo>[];
+    }
   }
 
   @override
@@ -498,38 +447,30 @@ final class _IosMethodChannelBlePlatform extends _MethodChannelBlePlatformBase
       serviceUuid: serviceUuid,
     );
 
-    return _runWithFallback<bool>(() async {
-      final result = await _invokeTransportAwareMethod<Map<dynamic, dynamic>>(
+    try {
+      final result = await invokeMethod<Map<dynamic, dynamic>>(
         'startScan',
-        _transportArguments(arguments),
+        arguments,
       );
       return result?['scanning'] == true;
-    }, false);
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
   Future<void> prepareDevice(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
+    await invokeMethod<void>(
       'prepareDevice',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
+      <String, Object?>{'deviceId': deviceId},
     );
   }
 
   @override
   Future<void> reconnect(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
+    await invokeMethod<void>(
       'reconnect',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
-    );
-  }
-
-  @override
-  BleConnection createConnection(String deviceId) {
-    return MethodChannelBleConnection(
-      deviceId: deviceId,
-      transport: transport,
-      binaryMessenger: binaryMessenger,
-      configuration: configuration,
+      <String, Object?>{'deviceId': deviceId},
     );
   }
 
@@ -571,47 +512,19 @@ final class _IosMethodChannelBlePlatform extends _MethodChannelBlePlatformBase
       'Unexpected iOS accessory setup result payload',
     );
   }
-
-  Future<T> _runWithFallback<T>(Future<T> Function() action, T fallback) async {
-    try {
-      return await action();
-    } catch (_) {
-      return fallback;
-    }
-  }
-
-  Map<String, Object?> _transportArguments([Map<String, Object?>? arguments]) {
-    return <String, Object?>{
-      if (arguments != null) ...arguments,
-      'transport': transport.toMap(),
-    };
-  }
-
-  Future<T?> _invokeTransportAwareMethod<T>(
-    String method, [
-    Object? arguments,
-  ]) async {
-    return invokeMethod<T>(method, arguments);
-  }
 }
 
 final class _MacosMethodChannelBlePlatform
     extends _MethodChannelBlePlatformBase {
   _MacosMethodChannelBlePlatform({
-    required this.transport,
     super.binaryMessenger,
     super.configuration = const BleChannelConfiguration(),
   }) : super(target: BleTarget.macos);
 
-  final BleTransport transport;
-
   @override
   Future<List<BleDeviceInfo>> getKnownDevices() async {
-    return _runWithFallback<List<BleDeviceInfo>>(() async {
-      final result = await _invokeTransportAwareMethod<List<dynamic>>(
-        'getAccessories',
-        _transportArguments(),
-      );
+    try {
+      final result = await invokeMethod<List<dynamic>>('getAccessories');
       if (result == null) {
         return const <BleDeviceInfo>[];
       }
@@ -622,7 +535,9 @@ final class _MacosMethodChannelBlePlatform
                 BleDeviceInfo.fromMap(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false);
-    }, const <BleDeviceInfo>[]);
+    } catch (_) {
+      return const <BleDeviceInfo>[];
+    }
   }
 
   @override
@@ -637,72 +552,30 @@ final class _MacosMethodChannelBlePlatform
       serviceUuid: serviceUuid,
     );
 
-    return _runWithFallback<bool>(() async {
-      final result = await _invokeTransportAwareMethod<Map<dynamic, dynamic>>(
+    try {
+      final result = await invokeMethod<Map<dynamic, dynamic>>(
         'startScan',
-        _transportArguments(arguments),
+        arguments,
       );
       return result?['scanning'] == true;
-    }, false);
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
   Future<void> prepareDevice(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
+    await invokeMethod<void>(
       'prepareDevice',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
+      <String, Object?>{'deviceId': deviceId},
     );
   }
 
   @override
   Future<void> reconnect(String deviceId) async {
-    await _invokeTransportAwareMethod<void>(
+    await invokeMethod<void>(
       'reconnect',
-      _transportArguments(<String, Object?>{'deviceId': deviceId}),
+      <String, Object?>{'deviceId': deviceId},
     );
-  }
-
-  @override
-  BleConnection createConnection(String deviceId) {
-    return MethodChannelBleConnection(
-      deviceId: deviceId,
-      transport: transport,
-      binaryMessenger: binaryMessenger,
-      configuration: configuration,
-    );
-  }
-
-  Future<T> _runWithFallback<T>(Future<T> Function() action, T fallback) async {
-    try {
-      return await action();
-    } on BleTransportException {
-      rethrow;
-    } catch (_) {
-      return fallback;
-    }
-  }
-
-  Map<String, Object?> _transportArguments([Map<String, Object?>? arguments]) {
-    return <String, Object?>{
-      if (arguments != null) ...arguments,
-      'transport': transport.toMap(),
-    };
-  }
-
-  Future<T?> _invokeTransportAwareMethod<T>(
-    String method, [
-    Object? arguments,
-  ]) async {
-    try {
-      return await invokeMethod<T>(method, arguments);
-    } on PlatformException catch (error) {
-      if (error.code == 'INVALID_TRANSPORT' ||
-          error.code == 'TRANSPORT_UNSUPPORTED') {
-        throw BleTransportException(
-          error.message ?? 'Failed to use ${transport.mode.name} transport',
-        );
-      }
-      rethrow;
-    }
   }
 }

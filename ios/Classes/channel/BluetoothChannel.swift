@@ -25,7 +25,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     }
 
     private struct TrackedBleConnection {
-        let transportConfig: BleTransportConfig
         let connection: BleConnection
     }
 
@@ -54,7 +53,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     private let restoreIdentifier: String
     private var needsServiceRediscovery = false
     private var restoredPeripheralId: String?
-    private var restoredTransportConfig: BleTransportConfig?
     private var reconnectionTimer: Timer?
     private var reconnectionAttempts = 0
     private var isShuttingDown = false
@@ -127,10 +125,8 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     }
 
     func reconnect(device: BleConnection, result: @escaping FlutterResult) {
-        let transportConfig = devices[device.deviceId]?.transportConfig ?? .gatt()
         reconnect(
             deviceId: device.deviceId,
-            transportConfig: transportConfig,
             result: result
         )
     }
@@ -152,48 +148,28 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
     }
 
-    private func getOrCreateDevice(
-        deviceId: String,
-        transportConfig: BleTransportConfig
-    ) -> BleConnection {
+    private func getOrCreateDevice(deviceId: String) -> BleConnection {
         if let existingDevice = devices[deviceId] {
-            if existingDevice.transportConfig == transportConfig {
+            if !existingDevice.connection.isCleanedUp {
                 return existingDevice.connection
             }
 
             existingDevice.connection.cleanup()
         }
 
-        let device: BleConnection = {
-            switch transportConfig.mode {
-            case .gatt:
-                return GattBleConnection(
-                    deviceId: deviceId,
-                    binaryMessenger: binaryMessenger,
-                    delegate: self,
-                    accessorySession: session,
-                    logCallback: { [weak self] message in self?.emitLog(message) }
-                )
-            case .l2cap:
-                return L2capBleConnection(
-                    deviceId: deviceId,
-                    binaryMessenger: binaryMessenger,
-                    delegate: self,
-                    accessorySession: session,
-                    psm: transportConfig.psm ?? 0,
-                    logCallback: { [weak self] message in self?.emitLog(message) }
-                )
-            }
-        }()
+        let device = GattBleConnection(
+            deviceId: deviceId,
+            binaryMessenger: binaryMessenger,
+            delegate: self,
+            accessorySession: session,
+            logCallback: { [weak self] message in self?.emitLog(message) }
+        )
 
         if let peripheralName = knownPeripheralNames[deviceId] {
             device.updateKnownPeripheralName(peripheralName)
         }
 
-        devices[deviceId] = TrackedBleConnection(
-            transportConfig: transportConfig,
-            connection: device
-        )
+        devices[deviceId] = TrackedBleConnection(connection: device)
         return device
     }
 
@@ -212,15 +188,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             return
         }
 
-        let transportConfig = resolveTransportConfig(arguments: arguments, result: result)
-        guard let transportConfig else {
-            return
-        }
-
-        let bleConnection = getOrCreateDevice(
-            deviceId: deviceId,
-            transportConfig: transportConfig
-        )
+        let bleConnection = getOrCreateDevice(deviceId: deviceId)
         if let peripheral = resolvePeripheral(deviceId: deviceId), let peripheralName = peripheral.name {
             bleConnection.updateKnownPeripheralName(peripheralName)
         }
@@ -242,17 +210,11 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             return
         }
 
-        let transportConfig = resolveTransportConfig(arguments: arguments, result: result)
-        guard let transportConfig else {
-            return
-        }
-
-        reconnect(deviceId: deviceId, transportConfig: transportConfig, result: result)
+        reconnect(deviceId: deviceId, result: result)
     }
 
     private func reconnect(
         deviceId: String,
-        transportConfig: BleTransportConfig,
         result: @escaping FlutterResult
     ) {
         guard ensureAccessorySetupSession(result: result) != nil else {
@@ -285,10 +247,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             return
         }
 
-        let bleConnection = getOrCreateDevice(
-            deviceId: deviceId,
-            transportConfig: transportConfig
-        )
+        let bleConnection = getOrCreateDevice(deviceId: deviceId)
 
         if let accessory = accessory(for: deviceId) {
             bleConnection.updateKnownPeripheralName(accessory.displayName)
@@ -312,7 +271,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
 
         logBle(
-            "reconnect deviceId=\(deviceId) transport=\(String(describing: transportConfig.mode)) peripheralState=\(peripheral.state.rawValue) tracked=\(devices[deviceId] != nil)"
+            "reconnect deviceId=\(deviceId) peripheralState=\(peripheral.state.rawValue) tracked=\(devices[deviceId] != nil)"
         )
 
         if bleConnection.hasActiveOrPendingConnection(for: peripheral) {
@@ -338,15 +297,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             return
         }
 
-        let transportConfig = resolveTransportConfig(
-            arguments: call.arguments as? [String: Any],
-            result: result
-        )
-        guard let transportConfig else {
-            return
-        }
-
-        let connectedDevices = buildKnownDeviceEntries(for: transportConfig).filter { entry in
+        let connectedDevices = buildKnownDeviceEntries().filter { entry in
             entry["isConnected"] as? Bool == true
         }
         result(connectedDevices)
@@ -357,15 +308,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             return
         }
 
-        let transportConfig = resolveTransportConfig(
-            arguments: call.arguments as? [String: Any],
-            result: result
-        )
-        guard let transportConfig else {
-            return
-        }
-
-        result(buildKnownDeviceEntries(for: transportConfig))
+        result(buildKnownDeviceEntries())
     }
 
     private func startScan(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -554,10 +497,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
                 continue
             }
 
-            connectToAccessoryPeripheral(
-                bluetoothId: bluetoothId,
-                transportConfig: trackedDevice.transportConfig
-            )
+            connectToAccessoryPeripheral(bluetoothId: bluetoothId)
         }
     }
 
@@ -728,6 +668,15 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
                 setupResult(nil)
                 self.setupResult = nil
             }
+        case .pickerSetupFailed:
+            let errorDescription = event.error?.localizedDescription ?? "nil"
+            if let accessory = event.accessory {
+                logAccessorySetup(
+                    "event=pickerSetupFailed error=\(errorDescription) accessory=\(accessorySetupSummary(for: accessory))"
+                )
+            } else {
+                logAccessorySetup("event=pickerSetupFailed error=\(errorDescription)")
+            }
         default:
             break
         }
@@ -795,10 +744,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
                 continue
             }
 
-            connectToAccessoryPeripheral(
-                bluetoothId: bluetoothId,
-                transportConfig: trackedDevice.transportConfig
-            )
+            connectToAccessoryPeripheral(bluetoothId: bluetoothId)
         }
     }
 
@@ -823,10 +769,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         )
     }
 
-    private func connectToAccessoryPeripheral(
-        bluetoothId: UUID,
-        transportConfig: BleTransportConfig
-    ) {
+    private func connectToAccessoryPeripheral(bluetoothId: UUID) {
         guard isAccessoryAssociated(bluetoothId),
             let central = centralManager,
             central.state == .poweredOn
@@ -840,10 +783,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             return
         }
 
-        let bleConnection = getOrCreateDevice(
-            deviceId: deviceId,
-            transportConfig: transportConfig
-        )
+        let bleConnection = getOrCreateDevice(deviceId: deviceId)
         if let accessory = pairedAccessories[bluetoothId] ?? sessionAccessories.first(where: { $0.bluetoothIdentifier == bluetoothId }) {
             bleConnection.updateKnownPeripheralName(accessory.displayName)
         }
@@ -852,7 +792,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
 
         logBle(
-            "connectToAccessoryPeripheral deviceId=\(deviceId) transport=\(String(describing: transportConfig.mode)) peripheralState=\(peripheral.state.rawValue)"
+            "connectToAccessoryPeripheral deviceId=\(deviceId) peripheralState=\(peripheral.state.rawValue)"
         )
 
         if bleConnection.hasActiveOrPendingConnection(for: peripheral) {
@@ -893,28 +833,18 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
         pairedAccessories = sessionPaired
 
-        for (deviceId, trackedDevice) in devices {
+        for (deviceId, _) in devices {
             guard let bluetoothId = UUID(uuidString: deviceId),
                 pairedAccessories[bluetoothId] != nil
             else {
                 continue
             }
 
-            connectToAccessoryPeripheral(
-                bluetoothId: bluetoothId,
-                transportConfig: trackedDevice.transportConfig
-            )
+            connectToAccessoryPeripheral(bluetoothId: bluetoothId)
         }
 
-        if needsServiceRediscovery,
-            let restoredPeripheralId,
-            let restoredTransportConfig
-        {
-            handleRestoredPeripheral(
-                peripheralId: restoredPeripheralId,
-                transportConfig: restoredTransportConfig,
-                central: central
-            )
+        if needsServiceRediscovery, let restoredPeripheralId {
+            handleRestoredPeripheral(peripheralId: restoredPeripheralId, central: central)
         }
     }
 
@@ -924,18 +854,13 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
     }
 
-    private func handleRestoredPeripheral(
-        peripheralId: String,
-        transportConfig: BleTransportConfig,
-        central: CBCentralManager
-    ) {
+    private func handleRestoredPeripheral(peripheralId: String, central: CBCentralManager) {
         guard let bluetoothId = UUID(uuidString: peripheralId),
             isAccessoryAssociated(bluetoothId)
         else {
             removeTrackedDevice(deviceId: peripheralId, disconnectError: "Accessory is no longer associated")
             needsServiceRediscovery = false
             restoredPeripheralId = nil
-            restoredTransportConfig = nil
             return
         }
 
@@ -943,15 +868,11 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         guard let peripheral = peripherals.first else {
             needsServiceRediscovery = false
             restoredPeripheralId = nil
-            restoredTransportConfig = nil
             return
         }
 
         cacheResolvedPeripheral(peripheral, deviceId: peripheralId)
-        let bleConnection = getOrCreateDevice(
-            deviceId: peripheralId,
-            transportConfig: transportConfig
-        )
+        let bleConnection = getOrCreateDevice(deviceId: peripheralId)
         if let accessory = accessory(for: peripheralId) {
             bleConnection.updateKnownPeripheralName(accessory.displayName)
         }
@@ -964,7 +885,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
         needsServiceRediscovery = false
         restoredPeripheralId = nil
-        restoredTransportConfig = nil
     }
 
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
@@ -985,7 +905,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
                 if peripheral.state == .connected {
                     needsServiceRediscovery = true
                     restoredPeripheralId = deviceId
-                    restoredTransportConfig = trackedDevice.transportConfig
                 }
             }
         }
@@ -1054,16 +973,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
     }
 
-    private func buildKnownDeviceEntries(for transportConfig: BleTransportConfig) -> [[String: Any]] {
-        switch transportConfig.mode {
-        case .gatt:
-            return buildGattKnownDeviceEntries()
-        case .l2cap:
-            return buildL2capKnownDeviceEntries()
-        }
-    }
-
-    private func buildGattKnownDeviceEntries() -> [[String: Any]] {
+    private func buildKnownDeviceEntries() -> [[String: Any]] {
         var orderedDeviceIds: [String] = []
         var deviceEntries: [String: (accessory: ASAccessory?, peripheral: CBPeripheral?, connection: BleConnection?)] =
             [:]
@@ -1094,7 +1004,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
                 deviceId: deviceId,
                 accessory: accessory,
                 peripheral: knownPeripherals[deviceId],
-                connection: trackedConnection(deviceId: deviceId, mode: .gatt)?.connection
+                connection: devices[deviceId]?.connection
             )
         }
 
@@ -1103,11 +1013,11 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
                 deviceId: deviceId,
                 accessory: accessory(for: deviceId),
                 peripheral: peripheral,
-                connection: trackedConnection(deviceId: deviceId, mode: .gatt)?.connection
+                connection: devices[deviceId]?.connection
             )
         }
 
-        for (deviceId, trackedDevice) in devices where trackedDevice.transportConfig.mode == .gatt {
+        for (deviceId, trackedDevice) in devices {
             upsert(
                 deviceId: deviceId,
                 accessory: accessory(for: deviceId),
@@ -1144,75 +1054,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         }
     }
 
-    private func buildL2capKnownDeviceEntries() -> [[String: Any]] {
-        let l2capDevices = devices.filter { $0.value.transportConfig.mode == .l2cap }
-        let orderedDeviceIds = l2capDevices.keys.sorted()
-
-        return orderedDeviceIds.compactMap { deviceId in
-            guard let trackedDevice = l2capDevices[deviceId] else {
-                return nil
-            }
-
-            let accessory = accessory(for: deviceId)
-            let peripheral =
-                trackedDevice.connection.currentPeripheral ?? knownPeripherals[deviceId] ?? resolvePeripheral(deviceId: deviceId)
-
-            if let peripheral {
-                cacheResolvedPeripheral(peripheral, deviceId: deviceId)
-            }
-
-            let peripheralName =
-                trackedDevice.connection.peripheralName ?? accessory?.displayName ?? peripheral?.name ?? knownPeripheralNames[deviceId] ?? "Unknown"
-            let isConnected = trackedDevice.connection.isConnected()
-            let state =
-                isConnected
-                ? CBPeripheralState.connected.rawValue
-                : (peripheral?.state.rawValue ?? CBPeripheralState.disconnected.rawValue)
-            let bonded = accessory != nil || trackedDevice.connection.isBonded
-
-            return [
-                "deviceId": deviceId,
-                "name": peripheralName,
-                "bonded": bonded,
-                "peripheralId": deviceId,
-                "peripheralName": peripheralName,
-                "isConnected": isConnected,
-                "state": state,
-                "bondState": bonded,
-            ]
-        }
-    }
-
-
-    private func trackedConnection(
-        deviceId: String,
-        mode: BleTransportMode
-    ) -> TrackedBleConnection? {
-        guard let trackedDevice = devices[deviceId],
-            trackedDevice.transportConfig.mode == mode
-        else {
-            return nil
-        }
-        return trackedDevice
-    }
-
-    private func resolveTransportConfig(
-        arguments: [String: Any]?,
-        result: @escaping FlutterResult
-    ) -> BleTransportConfig? {
-        do {
-            return try BleTransportConfig.fromArguments(arguments, defaultConfig: .gatt())
-        } catch let error as NSError {
-            result(
-                FlutterError(
-                    code: error.domain,
-                    message: error.localizedDescription,
-                    details: nil
-                )
-            )
-            return nil
-        }
-    }
 
     private func matchesIdentifier(_ lhs: String, _ rhs: String?) -> Bool {
         guard let rhs else {

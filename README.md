@@ -1,84 +1,137 @@
 # foundation_ble
 
-`foundation_ble` is a Flutter BLE transport plugin extracted from Envoy.
+`foundation_ble` is a Flutter plugin that provides a lightweight Bluetooth Low Energy (BLE) transport layer for Android, iOS, and macOS.
+(WIP: Linux and Windows)
 
-It gives you:
+The package is designed around a clear separation between:
 
-- BLE setup and device management through `FoundationBle`
-- Per-device raw byte read/write streams through `BleConnection`
-- Per-connection transport selection with GATT by default and Android L2CAP support
-- Native Android, iOS, and macOS BLE integrations without pulling in Envoy's higher-level protocol layer
+- **Control plane APIs** for device discovery, lifecycle management, and platform integration
+- **Data plane APIs** for high-throughput raw byte communication with BLE peripherals
 
-## Why
+Unlike higher-level BLE SDKs, `foundation_ble` intentionally focuses only on transport concerns. Protocol framing, serialization, encryption, and application-specific messaging are left to the consuming application.
 
-- Why: your BLE layer has a clear split between a control plane and a data plane.
-- Why: the control plane is things like `prepareDevice`, `reconnect`, `getConnectedDevices`,
-  `getCurrentDeviceStatus`, `removeDevice`, and `enableBluetooth`.
-- Why: the data plane is per-device raw byte read/write streams and high-frequency
-  connection events.
-- Why: this package is specifically the BLE plugin layer, so encoding, decoding, framing, and other
-  protocol-specific work are intentionally not part of this package.
+---
 
-## What This Package Exposes
+# Features
 
-### `FoundationBle`
+`foundation_ble` provides:
 
-Use `FoundationBle` for the control plane:
+- BLE scanning and device discovery
+- Device preparation and reconnection workflows
+- GATT-based BLE communication
+- Per-device raw byte streams
+- Connection lifecycle monitoring
+- Native Android, iOS, and macOS BLE integrations
+- Lightweight transport-only architecture without protocol-layer abstractions
 
-- host device name
-- enable Bluetooth
-- start/stop scan
-- get known devices
-- prepare or reconnect a device
-- remove a remembered device
-- cache per-device connections
-- listen to scan events
+---
 
-### `BleConnection`
+# Architecture
 
-Use `BleConnection` for the data plane:
+The package exposes two primary APIs:
 
-- `transport` for the active transport mode
-- `readStream` for raw inbound bytes
-- `write(...)` for raw outbound bytes
-- `deviceStatusStream` and `connectionEvents`
-- `disconnect()` and `reconnect()`
+| Layer | Responsibility |
+|---|---|
+| `FoundationBle` | Control plane operations |
+| `BleConnection` | Data plane communication |
 
-## Supported Platforms
+This separation allows applications to manage device orchestration independently from streaming BLE traffic.
 
-- Android
-- iOS
-- macOS
+---
 
-Notes:
+# `FoundationBle`
 
-- iOS support currently requires iOS `18.0+` because the package uses `AccessorySetupKit`.
-- macOS support uses CoreBluetooth central-mode APIs and keeps the same
-  `FoundationBle` / `BleConnection` structure as the mobile targets.
-- L2CAP transport selection is currently implemented on Android only. Selecting
-  `BleTransport.l2cap(...)` on iOS or macOS throws a `BleTransportException`.
-- The plugin does not currently expose web, Linux, or Windows BLE support.
+Use `FoundationBle` for device management:
 
-## Installation
+- Enable Bluetooth
+- Scan for peripherals
+- Retrieve known devices
+- Prepare or reconnect devices
+- Remove remembered devices
+- Cache active connections
+- Observe scan events
+- Access host device information
 
-Add the package to your `pubspec.yaml`:
+Typical control-plane operations include:
+
+- `prepareDevice(...)`
+- `connect(...)`
+- `reconnect(...)`
+- `disconnect(...)`
+- `getKnownDevices()`
+- `removeDevice(...)`
+- `startScan()`
+- `stopScan()`
+
+---
+
+# `BleConnection`
+
+Use `BleConnection` for per-device communication and streaming operations:
+
+- Receive raw inbound BLE bytes
+- Send raw outbound BLE bytes
+- Observe connection state transitions
+- Monitor connection events
+- Reconnect or disconnect individual peripherals
+
+Key APIs include:
+
+- `readStream`
+- `write(...)`
+- `deviceStatusStream`
+- `connectionEvents`
+- `disconnect()`
+- `reconnect()`
+
+---
+
+# Supported Platforms
+
+| Platform | Status |
+|---|---|
+| Android | Supported |
+| iOS | Supported |
+| macOS | Supported |
+| Linux | Not supported |
+| Windows | Not supported |
+| Web | Not supported |
+
+## Platform Notes
+
+- iOS support currently requires **iOS 18.0+** because the package uses `AccessorySetupKit`
+- macOS support uses CoreBluetooth central-mode APIs
+- Only GATT transport is currently supported
+
+---
+
+# Installation
+
+Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
   foundation_ble: ^0.0.1
 ```
 
-Then import it:
+Import the package:
 
 ```dart
 import 'package:foundation_ble/foundation_ble.dart';
 ```
 
-## Usage
+---
 
-### Android-style flow
+# Usage
 
-Use the control plane to connect a device, then bind to the data plane connection:
+## Android and macOS
+
+On Android and macOS, applications typically:
+
+1. Start scanning
+2. Select a discovered device
+3. Establish a connection
+4. Bind to the raw byte streams
 
 ```dart
 import 'dart:typed_data';
@@ -87,35 +140,40 @@ import 'package:foundation_ble/foundation_ble.dart';
 
 final bluetooth = FoundationBle();
 
+await bluetooth.startScan();
+
 Future<BleConnection> attachToDevice(String deviceId) async {
-  final connection = await bluetooth.connect(
-    deviceId,
-    transport: const BleTransport.gatt(),
-  );
+  final connection = await bluetooth.connect(deviceId);
 
   connection.deviceStatusStream.listen((status) {
-    // Observe connection, ready state, bonded state, and errors.
+    // Observe connection state, readiness, bonding, and errors.
   });
 
   connection.readStream.listen((bytes) {
-    // Handle raw BLE bytes from the peripheral.
+    // Handle inbound BLE bytes.
   });
 
   return connection;
 }
 
 Future<void> sendRawBytes(BleConnection connection) async {
-  await connection.write(Uint8List.fromList(<int>[0x01, 0x02, 0x03]));
+  await connection.write(
+    Uint8List.fromList(<int>[0x01, 0x02, 0x03]),
+  );
 }
 ```
 
-### iOS-style flow
+---
 
-On iOS, the accessory setup flow authorizes and discovers a device. Connect to
-the returned device ID afterwards:
+## iOS
+
+On iOS, device discovery and authorization are handled through `AccessorySetupKit`.
+
+Applications define picker descriptors that are presented through the native accessory setup flow.
 
 ```dart
 final bluetooth = FoundationBle();
+
 final device = await bluetooth.setupDevice(
   iosPickerItems: const <IosAccessoryPickerItem>[
     IosAccessoryPickerItem(
@@ -124,75 +182,48 @@ final device = await bluetooth.setupDevice(
       imageAsset: 'assets/passport_prime.png',
       descriptor: IosAccessoryDiscoveryDescriptor(
         bluetoothNameSubstring: 'Passport',
-        bluetoothServiceUuid: '6E400001-B5A3-F393-E0A9-E50E24DCCA9E',
+        bluetoothServiceUuid:
+            '6E400001-B5A3-F393-E0A9-E50E24DCCA9E',
       ),
     ),
   ],
 );
 
-final connection = await bluetooth.connect(
-  device.peripheralId,
-  transport: const BleTransport.gatt(),
-);
+final connection = await bluetooth.connect(device.peripheralId);
 
 connection.readStream.listen((bytes) {
-  // Raw data from the peripheral.
+  // Handle inbound BLE bytes.
 });
 ```
 
-### macOS-style flow
+---
 
-On macOS, scan first, then connect to a device using the same control-plane and
-data-plane split:
+# API Overview
 
-```dart
-final bluetooth = FoundationBle();
+## `FoundationBle`
 
-await bluetooth.startScan();
-final connection = await bluetooth.connect(
-  deviceId,
-  transport: const BleTransport.gatt(),
-);
+Control-plane APIs:
 
-connection.readStream.listen((bytes) {
-  // Raw data from the peripheral.
-});
-```
-
-### Android L2CAP flow
-
-On Android, you can opt into L2CAP while keeping the same `BleConnection`
-read/write and connection APIs:
-
-```dart
-final bluetooth = FoundationBle();
-final connection = await bluetooth.connect(
-  deviceId,
-  transport: const BleTransport.l2cap(psm: 0x0085),
-);
-```
-
-## API Overview
-
-Control plane APIs on `FoundationBle`:
-
-- `getDeviceConnection(deviceId, {transport, reset})`
+- `getDeviceConnection(deviceId)`
 - `getDeviceName()`
 - `requestEnableBle()`
 - `startScan()`
 - `stopScan()`
 - `getKnownDevices()`
-- `prepareDevice(deviceId, {transport})`
-- `connect(deviceId, {transport, reset})`
-- `reconnect(deviceId, {transport})`
+- `prepareDevice(deviceId)`
+- `connect(deviceId)`
+- `reconnect(deviceId)`
 - `disconnect(deviceId)`
 - `setupDevice({iosPickerItems})`
 - `removeDevice(deviceId)`
 - `scanEvents`
 
-Data plane APIs on `BleConnection`:
+---
 
-- `transport`
+## `BleConnection`
+
+Data-plane APIs:
+
 - `readStream`
 - `dataStream`
 - `write(data)`
@@ -202,126 +233,140 @@ Data plane APIs on `BleConnection`:
 - `disconnect()`
 - `reconnect()`
 
-Android-only connection capability:
+---
 
-- `AndroidBleConnectionCapability.bond()`
-
-Platform-only capabilities:
-
-- `IosAccessorySetupCapability.showAccessorySetup({items})`
-- `AndroidBlePlatformCapability.pair(deviceId)`
-- `AndroidBlePlatformCapability.getApiLevel()`
-
-## Platform Setup Notes
+## Platform-Specific Capabilities
 
 ### Android
 
-The plugin declares BLE permissions in its Android manifest, but your app still needs to request
-runtime permissions before scanning or connecting.
-
-Typical runtime permissions:
-
-- Android 12 and newer: `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`
-- Android 6 through 11: `ACCESS_FINE_LOCATION`
-
-The example app shows one working permission flow in
-[`example/lib/main.dart`](example/lib/main.dart) and
-[`example/android/app/src/main/kotlin/xyz/foundation/ble/foundation_ble_example/MainActivity.kt`](example/android/app/src/main/kotlin/xyz/foundation/ble/foundation_ble_example/MainActivity.kt).
+- `AndroidBleConnectionCapability.bond()`
+- `AndroidBlePlatformCapability.pair(deviceId)`
+- `AndroidBlePlatformCapability.getApiLevel()`
 
 ### iOS
 
-iOS device discovery uses `AccessorySetupKit` (`ASAccessorySession`) instead of a traditional BLE
-scan. The system shows a native picker filtered by the descriptors you pass at runtime, but **every
-descriptor value must also be declared in `Info.plist`** — the plugin validates this before the
-picker appears and throws `ACCESSORY_SETUP_UNDECLARED_BLUETOOTH_NAME`,
-`ACCESSORY_SETUP_UNDECLARED_BLUETOOTH_SERVICE`, or
-`ACCESSORY_SETUP_UNDECLARED_BLUETOOTH_COMPANY_ID` if there is a mismatch.
+- `IosAccessorySetupCapability.showAccessorySetup({items})`
 
-**Step 1 — declare Bluetooth support**
+---
 
-Add both keys so the plugin initialises correctly on all iOS 18 runtimes:
+# Platform Configuration
+
+## Android
+
+The plugin declares BLE permissions in its Android manifest, but applications must still request runtime permissions before scanning or connecting.
+
+### Required Runtime Permissions
+
+| Android Version | Permissions |
+|---|---|
+| Android 12+ | `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT` |
+| Android 6–11 | `ACCESS_FINE_LOCATION` |
+
+The example application demonstrates a complete permission flow:
+
+- `example/lib/main.dart`
+- `example/android/app/src/main/kotlin/xyz/foundation/ble/foundation_ble_example/MainActivity.kt`
+
+---
+
+## iOS
+
+iOS device discovery uses `AccessorySetupKit` (`ASAccessorySession`) rather than traditional BLE scanning.
+
+The system presents a native accessory picker filtered by the descriptors provided at runtime.
+
+All descriptor values used in picker items **must also be declared in `Info.plist`**. The plugin validates these declarations before presenting the picker UI.
+
+Possible validation errors include:
+
+- `ACCESSORY_SETUP_UNDECLARED_BLUETOOTH_NAME`
+- `ACCESSORY_SETUP_UNDECLARED_BLUETOOTH_SERVICE`
+- `ACCESSORY_SETUP_UNDECLARED_BLUETOOTH_COMPANY_ID`
+
+---
+
+### Step 1 — Declare Bluetooth Support
 
 ```xml
 <key>NSAccessorySetupSupports</key>
 <array>
     <string>Bluetooth</string>
 </array>
+
 <key>NSAccessorySetupKitSupports</key>
 <array>
     <string>Bluetooth</string>
 </array>
 ```
 
-**Step 2 — declare every filter value your picker items use**
+---
 
-Each `IosAccessoryPickerItem` descriptor field has a matching `Info.plist` array. Every value you
-pass at runtime must appear in the corresponding array:
+### Step 2 — Declare Picker Descriptor Values
 
-| Dart field | Info.plist key |
+Each `IosAccessoryPickerItem` descriptor field maps to a corresponding `Info.plist` key.
+
+| Dart Field | `Info.plist` Key |
 |---|---|
 | `bluetoothNameSubstring` | `NSAccessorySetupBluetoothNames` |
 | `bluetoothServiceUuid` | `NSAccessorySetupBluetoothServices` |
 | `bluetoothCompanyIdentifier` | `NSAccessorySetupBluetoothCompanyIdentifiers` |
 
-Example — if your picker item uses `bluetoothNameSubstring: 'Passport Prime'` and
-`bluetoothServiceUuid: '6E400001-B5A3-F393-E0A9-E50E24DCCA9E'`:
+Example:
 
 ```xml
 <key>NSAccessorySetupBluetoothNames</key>
 <array>
     <string>Passport Prime</string>
 </array>
+
 <key>NSAccessorySetupBluetoothServices</key>
 <array>
     <string>6E400001-B5A3-F393-E0A9-E50E24DCCA9E</string>
 </array>
 ```
 
-Name matching is case-insensitive and substring-based, so `"Passport"` would also satisfy a
-declared entry of `"Passport Prime"`.
+Name matching is case-insensitive and substring-based. For example, `"Passport"` matches `"Passport Prime"`.
 
-**Step 3 — add the Bluetooth usage description**
+---
+
+### Step 3 — Add Bluetooth Usage Description
 
 ```xml
 <key>NSBluetoothAlwaysUsageDescription</key>
 <string>Used to discover and connect to BLE accessories.</string>
 ```
 
-The example app includes a complete working configuration in
-[`example/ios/Runner/Info.plist`](example/ios/Runner/Info.plist).
+A complete working configuration is available in:
 
-### macOS
+- `example/ios/Runner/Info.plist`
 
-On macOS, CoreBluetooth access also needs app sandbox configuration in addition to the Bluetooth
-usage description.
+---
 
-Typical macOS setup:
+## macOS
 
-- add `NSBluetoothAlwaysUsageDescription` to `Info.plist`
-- enable `com.apple.security.device.bluetooth` in your app entitlements
+On macOS, CoreBluetooth access requires both Bluetooth usage descriptions and sandbox entitlements.
 
-The example app includes a working setup in
-[`example/macos/Runner/Info.plist`](example/macos/Runner/Info.plist),
-[`example/macos/Runner/DebugProfile.entitlements`](example/macos/Runner/DebugProfile.entitlements),
-and [`example/macos/Runner/Release.entitlements`](example/macos/Runner/Release.entitlements).
+Typical setup includes:
 
-## What This Package Does Not Do
+- Adding `NSBluetoothAlwaysUsageDescription` to `Info.plist`
+- Enabling `com.apple.security.device.bluetooth` in app entitlements
 
-- It does not encode or decode application payloads.
-- It does not implement Quantum Link protocol semantics.
-- It does not transform raw bytes into domain models.
-- It does not replace your app-layer protocol handling.
+---
 
-## Example App
+# Example Application
 
-See the example app for a complete BLE console that:
+The example application demonstrates:
 
-- checks Android permissions
-- enables Bluetooth on Android
-- scans and lists known devices on Android and macOS
-- attaches to a `BleConnection`
-- reads raw bytes
-- writes UTF-8 or hex payloads
-- monitors connection events
+- Android permission handling
+- Enabling Bluetooth on Android
+- BLE scanning and device discovery
+- Managing `BleConnection` instances
+- Reading raw byte streams
+- Writing UTF-8 and hexadecimal payloads
+- Monitoring connection lifecycle events
 
-Start with [`example/lib/main.dart`](example/lib/main.dart).
+Start with:
+
+```text
+example/lib/main.dart
+```

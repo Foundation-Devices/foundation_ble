@@ -7,11 +7,11 @@ class BleSetupTimeoutException implements Exception {
   String toString() => 'BleSetupTimeoutException: $message';
 }
 
-class BleTransportException implements Exception {
-  const BleTransportException(this.message);
+class BleConnectionException implements Exception {
+  const BleConnectionException(this.message);
 
   final String message;
 
   @override
-  String toString() => 'BleTransportException: $message';
+  String toString() => 'BleConnectionException: $message';
 }

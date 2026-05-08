@@ -7,7 +7,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   private struct ScanRequest {
     let filterDeviceId: String?
     let serviceUUID: CBUUID?
-    let transportConfig: BleTransportConfig
 
     var scanServices: [CBUUID]? {
       guard let serviceUUID else {
@@ -18,7 +17,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   }
 
   private struct TrackedBleConnection {
-    let transportConfig: BleTransportConfig
     let connection: BleConnection
   }
 
@@ -104,12 +102,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   }
 
   func reconnect(device: BleConnection, result: @escaping FlutterResult) {
-    let transportConfig = devices[device.deviceId]?.transportConfig ?? .gatt()
-    reconnect(
-      deviceId: device.deviceId,
-      transportConfig: transportConfig,
-      result: result
-    )
+    reconnect(deviceId: device.deviceId, result: result)
   }
 
   private func hostDeviceName() -> String {
@@ -262,44 +255,26 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     pendingPermissionResult(granted)
   }
 
-  private func getOrCreateDevice(
-    deviceId: String,
-    transportConfig: BleTransportConfig
-  ) -> BleConnection {
+  private func getOrCreateDevice(deviceId: String) -> BleConnection {
     if let existingDevice = devices[deviceId] {
-      if existingDevice.transportConfig == transportConfig {
+      if !existingDevice.connection.isCleanedUp {
         return existingDevice.connection
       }
 
       existingDevice.connection.cleanup()
     }
 
-    let device: BleConnection = {
-      switch transportConfig.mode {
-      case .gatt:
-        return GattBleConnection(
-          deviceId: deviceId,
-          binaryMessenger: binaryMessenger,
-          delegate: self
-        )
-      case .l2cap:
-        return L2capBleConnection(
-          deviceId: deviceId,
-          binaryMessenger: binaryMessenger,
-          delegate: self,
-          psm: transportConfig.psm ?? 0
-        )
-      }
-    }()
+    let device = GattBleConnection(
+      deviceId: deviceId,
+      binaryMessenger: binaryMessenger,
+      delegate: self
+    )
 
     if let peripheralName = knownPeripheralNames[deviceId] {
       device.updateKnownPeripheralName(peripheralName)
     }
 
-    devices[deviceId] = TrackedBleConnection(
-      transportConfig: transportConfig,
-      connection: device
-    )
+    devices[deviceId] = TrackedBleConnection(connection: device)
     return device
   }
 
@@ -318,12 +293,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       return
     }
 
-    let transportConfig = resolveTransportConfig(arguments: arguments, result: result)
-    guard let transportConfig else {
-      return
-    }
-
-    _ = getOrCreateDevice(deviceId: deviceId, transportConfig: transportConfig)
+    _ = getOrCreateDevice(deviceId: deviceId)
     _ = resolvePeripheral(deviceId: deviceId)
     result(true)
   }
@@ -343,11 +313,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       return
     }
 
-    let transportConfig = resolveTransportConfig(arguments: arguments, result: result)
-    guard let transportConfig else {
-      return
-    }
-
     ensureBluetoothManager()
 
     guard let central = centralManager, central.state == .poweredOn else {
@@ -361,14 +326,10 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       return
     }
 
-    _ = getOrCreateDevice(deviceId: deviceId, transportConfig: transportConfig)
+    _ = getOrCreateDevice(deviceId: deviceId)
     _ = beginScan(
       with: central,
-      request: ScanRequest(
-        filterDeviceId: deviceId,
-        serviceUUID: nil,
-        transportConfig: transportConfig
-      )
+      request: ScanRequest(filterDeviceId: deviceId, serviceUUID: nil)
     )
     result(["scanning": true])
   }
@@ -388,17 +349,11 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       return
     }
 
-    let transportConfig = resolveTransportConfig(arguments: arguments, result: result)
-    guard let transportConfig else {
-      return
-    }
-
-    reconnect(deviceId: deviceId, transportConfig: transportConfig, result: result)
+    reconnect(deviceId: deviceId, result: result)
   }
 
   private func reconnect(
     deviceId: String,
-    transportConfig: BleTransportConfig,
     result: @escaping FlutterResult
   ) {
     ensureBluetoothManager()
@@ -414,19 +369,12 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       return
     }
 
-    let bleConnection = getOrCreateDevice(
-      deviceId: deviceId,
-      transportConfig: transportConfig
-    )
+    let bleConnection = getOrCreateDevice(deviceId: deviceId)
 
     guard let peripheral = resolvePeripheral(deviceId: deviceId) else {
       _ = beginScan(
         with: central,
-        request: ScanRequest(
-          filterDeviceId: deviceId,
-          serviceUUID: nil,
-          transportConfig: transportConfig
-        )
+        request: ScanRequest(filterDeviceId: deviceId, serviceUUID: nil)
       )
       result(["reconnecting": true])
       return
@@ -443,30 +391,14 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   }
 
   private func getConnectedDevices(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    let transportConfig = resolveTransportConfig(
-      arguments: call.arguments as? [String: Any],
-      result: result
-    )
-    guard let transportConfig else {
-      return
-    }
-
-    let connectedDevices = buildKnownDeviceEntries(for: transportConfig).filter { entry in
+    let connectedDevices = buildKnownDeviceEntries().filter { entry in
       entry["isConnected"] as? Bool == true
     }
     result(connectedDevices)
   }
 
   private func getAccessories(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    let transportConfig = resolveTransportConfig(
-      arguments: call.arguments as? [String: Any],
-      result: result
-    )
-    guard let transportConfig else {
-      return
-    }
-
-    result(buildKnownDeviceEntries(for: transportConfig))
+    result(buildKnownDeviceEntries())
   }
 
   private func removeDevice(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -550,11 +482,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     switch central.state {
     case .poweredOn:
       let result = pendingScanResult
-      let request = pendingScanRequest ?? ScanRequest(
-        filterDeviceId: nil,
-        serviceUUID: nil,
-        transportConfig: .gatt()
-      )
+      let request = pendingScanRequest ?? ScanRequest(filterDeviceId: nil, serviceUUID: nil)
       clearPendingScan()
       startScan(with: central, request: request, result: result)
     case .unknown, .resetting:
@@ -702,10 +630,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     if isTargetedMatch && (targetServiceUUID == nil || matchesServiceUUID) {
       stopScanInternal(sendEvent: true)
-      connectToDevice(
-        peripheral,
-        transportConfig: activeScanRequest?.transportConfig ?? .gatt()
-      )
+      connectToDevice(peripheral)
     }
   }
 
@@ -762,16 +687,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     }
   }
 
-  private func buildKnownDeviceEntries(for transportConfig: BleTransportConfig) -> [[String: Any]] {
-    switch transportConfig.mode {
-    case .gatt:
-      buildGattKnownDeviceEntries()
-    case .l2cap:
-      buildL2capKnownDeviceEntries()
-    }
-  }
-
-  private func buildGattKnownDeviceEntries() -> [[String: Any]] {
+  private func buildKnownDeviceEntries() -> [[String: Any]] {
     ensureBluetoothManager()
 
     var orderedDeviceIds: [String] = []
@@ -802,7 +718,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         upsert(
           deviceId: deviceId,
           peripheral: peripheral,
-          connection: trackedConnection(deviceId: deviceId, mode: .gatt)?.connection
+          connection: devices[deviceId]?.connection
         )
       }
     }
@@ -811,11 +727,11 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       upsert(
         deviceId: deviceId,
         peripheral: peripheral,
-        connection: trackedConnection(deviceId: deviceId, mode: .gatt)?.connection
+        connection: devices[deviceId]?.connection
       )
     }
 
-    for (deviceId, trackedDevice) in devices where trackedDevice.transportConfig.mode == .gatt {
+    for (deviceId, trackedDevice) in devices {
       upsert(
         deviceId: deviceId,
         peripheral: trackedDevice.connection.currentPeripheral ?? knownPeripherals[deviceId],
@@ -837,47 +753,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         connection?.currentPeripheral?.state.rawValue ??
         peripheral?.state.rawValue ??
         CBPeripheralState.disconnected.rawValue
-
-      return [
-        "deviceId": deviceId,
-        "name": peripheralName,
-        "bonded": false,
-        "peripheralId": deviceId,
-        "peripheralName": peripheralName,
-        "isConnected": isConnected,
-        "state": state,
-        "bondState": false,
-      ]
-    }
-  }
-
-  private func buildL2capKnownDeviceEntries() -> [[String: Any]] {
-    let l2capDevices = devices.filter { $0.value.transportConfig.mode == .l2cap }
-    let orderedDeviceIds = l2capDevices.keys.sorted()
-
-    return orderedDeviceIds.compactMap { deviceId in
-      guard let trackedDevice = l2capDevices[deviceId] else {
-        return nil
-      }
-
-      let peripheral =
-        trackedDevice.connection.currentPeripheral ??
-        knownPeripherals[deviceId] ??
-        resolvePeripheral(deviceId: deviceId)
-
-      if let peripheral {
-        knownPeripherals[deviceId] = peripheral
-      }
-
-      let peripheralName =
-        trackedDevice.connection.peripheralName ??
-        peripheral.map { displayName(for: $0, deviceId: deviceId) } ??
-        knownPeripheralNames[deviceId] ??
-        "Unknown"
-      let isConnected = trackedDevice.connection.isConnected()
-      let state = isConnected
-        ? CBPeripheralState.connected.rawValue
-        : (peripheral?.state.rawValue ?? CBPeripheralState.disconnected.rawValue)
 
       return [
         "deviceId": deviceId,
@@ -935,16 +810,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       serviceUUID = nil
     }
 
-    let transportConfig = try BleTransportConfig.fromArguments(
-      arguments,
-      defaultConfig: .gatt()
-    )
-
-    return ScanRequest(
-      filterDeviceId: filterDeviceId,
-      serviceUUID: serviceUUID,
-      transportConfig: transportConfig
-    )
+    return ScanRequest(filterDeviceId: filterDeviceId, serviceUUID: serviceUUID)
   }
 
   private func beginScan(with central: CBCentralManager, request: ScanRequest) -> Bool {
@@ -987,19 +853,13 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     }
   }
 
-  private func connectToDevice(
-    _ peripheral: CBPeripheral,
-    transportConfig: BleTransportConfig = .gatt()
-  ) {
+  private func connectToDevice(_ peripheral: CBPeripheral) {
     let deviceId = peripheral.identifier.uuidString
     knownPeripherals[deviceId] = peripheral
     if let deviceName = peripheral.name, !deviceName.isEmpty {
       knownPeripheralNames[deviceId] = deviceName
     }
-    let connection = getOrCreateDevice(
-      deviceId: deviceId,
-      transportConfig: transportConfig
-    )
+    let connection = getOrCreateDevice(deviceId: deviceId)
     connection.updateKnownPeripheralName(peripheral.name)
     connection.connect(peripheral: peripheral)
   }
@@ -1025,35 +885,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     return true
   }
 
-  private func trackedConnection(
-    deviceId: String,
-    mode: BleTransportMode
-  ) -> TrackedBleConnection? {
-    guard let trackedDevice = devices[deviceId],
-          trackedDevice.transportConfig.mode == mode
-    else {
-      return nil
-    }
-    return trackedDevice
-  }
 
-  private func resolveTransportConfig(
-    arguments: [String: Any]?,
-    result: @escaping FlutterResult
-  ) -> BleTransportConfig? {
-    do {
-      return try BleTransportConfig.fromArguments(arguments, defaultConfig: .gatt())
-    } catch let error as NSError {
-      result(
-        FlutterError(
-          code: error.domain,
-          message: error.localizedDescription,
-          details: nil
-        )
-      )
-      return nil
-    }
-  }
 
   private func matchesIdentifier(_ lhs: String, _ rhs: String?) -> Bool {
     guard let rhs else {

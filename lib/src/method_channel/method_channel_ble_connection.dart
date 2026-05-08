@@ -9,7 +9,6 @@ import 'ble_channel_configuration.dart';
 class MethodChannelBleConnection implements BleConnection {
   MethodChannelBleConnection({
     required this.deviceId,
-    this.transport = const BleTransport.gatt(),
     BinaryMessenger? binaryMessenger,
     BleChannelConfiguration configuration = const BleChannelConfiguration(),
   }) : _methodChannel = MethodChannel(
@@ -32,6 +31,9 @@ class MethodChannelBleConnection implements BleConnection {
          const StandardMethodCodec(),
          binaryMessenger,
        ) {
+    _deviceStatusController = StreamController<DeviceStatus>.broadcast(
+      onListen: _startDeviceStatusSubscription,
+    );
     _initChannels();
   }
 
@@ -43,13 +45,9 @@ class MethodChannelBleConnection implements BleConnection {
   @override
   final String deviceId;
 
-  @override
-  final BleTransport transport;
-
   final StreamController<Uint8List> _readController =
       StreamController<Uint8List>.broadcast();
-  final StreamController<DeviceStatus> _deviceStatusController =
-      StreamController<DeviceStatus>.broadcast();
+  late final StreamController<DeviceStatus> _deviceStatusController;
 
   StreamSubscription<dynamic>? _deviceStatusSubscription;
 
@@ -75,6 +73,12 @@ class MethodChannelBleConnection implements BleConnection {
       }
       return ByteData(0);
     });
+  }
+
+  void _startDeviceStatusSubscription() {
+    if (_deviceStatusSubscription != null || _isDisposed) {
+      return;
+    }
 
     _deviceStatusSubscription = _connectionEventChannel
         .receiveBroadcastStream()
@@ -201,7 +205,6 @@ class AndroidMethodChannelBleConnection extends MethodChannelBleConnection
     implements AndroidBleConnectionCapability {
   AndroidMethodChannelBleConnection({
     required super.deviceId,
-    super.transport = const BleTransport.gatt(),
     super.binaryMessenger,
     super.configuration,
   });

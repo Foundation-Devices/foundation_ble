@@ -3,7 +3,6 @@ import 'dart:async';
 import 'ble_connection.dart';
 import 'ble_exceptions.dart';
 import 'ble_platform.dart';
-import 'ble_transport.dart';
 import 'method_channel/method_channel_ble_platform.dart';
 import 'models/ble_device_info.dart';
 import 'models/ble_scan_event.dart';
@@ -14,21 +13,14 @@ class FoundationBle {
   FoundationBle({
     BlePlatform? platform,
     this.setupTimeout = const Duration(seconds: 10),
-  }) : _hasCustomPlatform = platform != null,
-       platform = platform ?? MethodChannelBlePlatform() {
+  }) : platform = platform ?? MethodChannelBlePlatform() {
     _ownedPlatforms.add(this.platform);
-    if (!_hasCustomPlatform) {
-      _transportPlatforms[const BleTransport.gatt()] = this.platform;
-    }
   }
 
   final BlePlatform platform;
   final Duration setupTimeout;
-  final bool _hasCustomPlatform;
 
   final List<BlePlatform> _ownedPlatforms = <BlePlatform>[];
-  final Map<BleTransport, BlePlatform> _transportPlatforms =
-      <BleTransport, BlePlatform>{};
 
   final Map<String, BleConnection> _deviceConnections =
       <String, BleConnection>{};
@@ -48,25 +40,25 @@ class FoundationBle {
 
   Stream<String> get logEvents => platform.logEvents;
 
-  BleConnection getDeviceConnection(
-    String deviceId, {
-    BleTransport transport = const BleTransport.gatt(),
-    bool reset = false,
-  }) {
-    final selectedPlatform = _platformForTransport(transport);
+  BleConnection getDeviceConnection(String deviceId) {
     final existingConnection = _deviceConnections[deviceId];
-    if (!reset &&
-        existingConnection != null &&
-        existingConnection.transport == transport) {
+    if (existingConnection != null) {
       return existingConnection;
     }
 
+    final connection = platform.createConnection(deviceId);
+    _deviceConnections[deviceId] = connection;
+    _notifyDeviceConnectionsChanged();
+    return connection;
+  }
+
+  Future<BleConnection> _createDeviceConnection(String deviceId) async {
+    final existingConnection = _deviceConnections.remove(deviceId);
     if (existingConnection != null) {
-      _deviceConnections.remove(deviceId);
-      unawaited(existingConnection.dispose());
+      await existingConnection.dispose();
     }
 
-    final connection = selectedPlatform.createConnection(deviceId);
+    final connection = platform.createConnection(deviceId);
     _deviceConnections[deviceId] = connection;
     _notifyDeviceConnectionsChanged();
     return connection;
@@ -97,24 +89,7 @@ class FoundationBle {
     return android?.requestEnableBle() ?? Future.value(null);
   }
 
-  Future<List<BleDeviceInfo>> getKnownDevices() async {
-    if (_ownedPlatforms.length == 1) {
-      return platform.getKnownDevices();
-    }
-
-    final devicesById = <String, BleDeviceInfo>{};
-    final deviceLists = await Future.wait(
-      _ownedPlatforms.map((ownedPlatform) => ownedPlatform.getKnownDevices()),
-    );
-
-    for (final deviceList in deviceLists) {
-      for (final device in deviceList) {
-        devicesById[device.peripheralId] = device;
-      }
-    }
-
-    return devicesById.values.toList(growable: false);
-  }
+  Future<List<BleDeviceInfo>> getKnownDevices() => platform.getKnownDevices();
 
   Future<bool> startScan({
     String? deviceId,
@@ -128,17 +103,12 @@ class FoundationBle {
 
   Future<bool> stopScan() => platform.stopScan();
 
-  Future<void> prepareDevice(
-    String deviceId, {
-    BleTransport transport = const BleTransport.gatt(),
-  }) => _platformForTransport(transport).prepareDevice(deviceId);
+  Future<void> prepareDevice(String deviceId) =>
+      platform.prepareDevice(deviceId);
 
-  Future<void> reconnect(
-    String deviceId, {
-    BleTransport transport = const BleTransport.gatt(),
-  }) async {
-    getDeviceConnection(deviceId, transport: transport);
-    await _platformForTransport(transport).reconnect(deviceId);
+  Future<void> reconnect(String deviceId) async {
+    getDeviceConnection(deviceId);
+    await platform.reconnect(deviceId);
   }
 
   Future<void> disconnect(String deviceId) async {
@@ -146,10 +116,7 @@ class FoundationBle {
   }
 
   Future<bool> removeDevice(String deviceId) async {
-    var removed = false;
-    for (final ownedPlatform in _ownedPlatforms) {
-      removed = await ownedPlatform.removeDevice(deviceId) || removed;
-    }
+    final removed = await platform.removeDevice(deviceId);
 
     if (removed) {
       removeDeviceConnection(deviceId);
@@ -157,32 +124,16 @@ class FoundationBle {
     return removed;
   }
 
-  Future<BleConnection> connect(
-    String deviceId, {
-    BleTransport transport = const BleTransport.gatt(),
-    bool reset = false,
-  }) async {
+  Future<BleConnection> connect(String deviceId) async {
     final resolvedDeviceId = _requireDeviceId(
       deviceId,
       message: 'Device ID is required when connecting to a BLE device',
     );
 
     return switch (platform.target) {
-      BleTarget.ios => _connectIos(
-        deviceId: resolvedDeviceId,
-        transport: transport,
-        reset: reset,
-      ),
-      BleTarget.macos => _connectMacos(
-        deviceId: resolvedDeviceId,
-        transport: transport,
-        reset: reset,
-      ),
-      BleTarget.android => _connectAndroid(
-        deviceId: resolvedDeviceId,
-        transport: transport,
-        reset: reset,
-      ),
+      BleTarget.ios => _connectIos(deviceId: resolvedDeviceId),
+      BleTarget.macos => _connectMacos(deviceId: resolvedDeviceId),
+      BleTarget.android => _connectAndroid(deviceId: resolvedDeviceId),
     };
   }
 
@@ -254,68 +205,18 @@ class FoundationBle {
     );
   }
 
-  Future<BleConnection> _connectIos({
-    required String deviceId,
-    required BleTransport transport,
-    bool reset = false,
-  }) async {
-    final selectedPlatform = _platformForTransport(transport);
-    await selectedPlatform.prepareDevice(deviceId);
+  Future<BleConnection> _connectIos({required String deviceId}) async {
+    final connection = await _createDeviceConnection(deviceId);
+    await platform.prepareDevice(deviceId);
 
-    final connection = getDeviceConnection(
-      deviceId,
-      transport: transport,
-      reset: reset,
-    );
     final currentStatus = await connection.getCurrentDeviceStatus();
     if (currentStatus.readyForWrite) {
       return connection;
     }
 
     if (!currentStatus.connected) {
-      await selectedPlatform.reconnect(deviceId);
+      await platform.reconnect(deviceId);
     }
-
-    final deviceStatus = await _waitForStatus(
-      stream: connection.connectionEvents,
-      accepts: (DeviceStatus event) =>
-          event.readyForWrite || (event.hasError && !event.connected),
-      initialStatus: currentStatus,
-      fallbackStatus: connection.getCurrentDeviceStatus,
-    );
-
-    if (deviceStatus.hasError) {
-      throw BleTransportException(
-        deviceStatus.error ?? 'Device connection failed',
-      );
-    }
-
-    if (deviceStatus.readyForWrite) {
-      return connection;
-    }
-
-    throw const BleSetupTimeoutException('Device connection timed out');
-  }
-
-  Future<BleConnection> _connectMacos({
-    required String deviceId,
-    required BleTransport transport,
-    bool reset = false,
-  }) async {
-    final selectedPlatform = _platformForTransport(transport);
-    await selectedPlatform.prepareDevice(deviceId);
-
-    final connection = getDeviceConnection(
-      deviceId,
-      transport: transport,
-      reset: reset,
-    );
-    final currentStatus = await connection.getCurrentDeviceStatus();
-    if (currentStatus.readyForWrite) {
-      return connection;
-    }
-
-    await selectedPlatform.reconnect(deviceId);
 
     final deviceStatus = await _waitForStatus(
       stream: connection.deviceStatusStream,
@@ -326,43 +227,7 @@ class FoundationBle {
     );
 
     if (deviceStatus.hasError) {
-      throw BleTransportException(
-        deviceStatus.error ?? 'Device connection failed',
-      );
-    }
-
-    if (deviceStatus.connected) {
-      return connection;
-    }
-
-    throw const BleSetupTimeoutException('Device connection timed out');
-  }
-
-  Future<BleConnection> _connectAndroid({
-    required String deviceId,
-    required BleTransport transport,
-    bool reset = false,
-  }) async {
-    final selectedPlatform = _platformForTransport(transport);
-    await selectedPlatform.reconnect(deviceId);
-
-    final connection = getDeviceConnection(
-      deviceId,
-      transport: transport,
-      reset: reset,
-    );
-
-    final currentStatus = await connection.getCurrentDeviceStatus();
-    final deviceStatus = await _waitForStatus(
-      stream: connection.connectionEvents,
-      accepts: (DeviceStatus event) =>
-          event.readyForWrite || (event.hasError && !event.connected),
-      initialStatus: currentStatus,
-      fallbackStatus: connection.getCurrentDeviceStatus,
-    );
-
-    if (deviceStatus.hasError) {
-      throw BleTransportException(
+      throw BleConnectionException(
         deviceStatus.error ?? 'Device connection failed',
       );
     }
@@ -374,26 +239,67 @@ class FoundationBle {
     throw const BleSetupTimeoutException('Device connection timed out');
   }
 
-  BlePlatform _platformForTransport(BleTransport transport) {
-    transport.validate();
+  Future<BleConnection> _connectMacos({required String deviceId}) async {
+    final connection = await _createDeviceConnection(deviceId);
+    await platform.prepareDevice(deviceId);
 
-    if (_hasCustomPlatform) {
-      if (transport.isL2cap) {
-        throw const BleTransportException(
-          'Per-connection transport selection requires the default native platform implementation',
-        );
-      }
-      return platform;
+    final currentStatus = await connection.getCurrentDeviceStatus();
+    if (currentStatus.readyForWrite) {
+      return connection;
     }
 
-    return _transportPlatforms.putIfAbsent(transport, () {
-      final scopedPlatform = MethodChannelBlePlatform(
-        target: platform.target,
-        transport: transport,
+    await platform.reconnect(deviceId);
+
+    final deviceStatus = await _waitForStatus(
+      stream: connection.deviceStatusStream,
+      accepts: (DeviceStatus event) =>
+          event.readyForWrite || (event.hasError && !event.connected),
+      initialStatus: currentStatus,
+      fallbackStatus: connection.getCurrentDeviceStatus,
+    );
+
+    if (deviceStatus.hasError) {
+      throw BleConnectionException(
+        deviceStatus.error ?? 'Device connection failed',
       );
-      _ownedPlatforms.add(scopedPlatform);
-      return scopedPlatform;
-    });
+    }
+
+    if (deviceStatus.readyForWrite) {
+      return connection;
+    }
+
+    throw const BleSetupTimeoutException('Device connection timed out');
+  }
+
+  Future<BleConnection> _connectAndroid({required String deviceId}) async {
+    final connection = await _createDeviceConnection(deviceId);
+
+    final currentStatus = await connection.getCurrentDeviceStatus();
+    if (currentStatus.readyForWrite) {
+      return connection;
+    }
+
+    await platform.reconnect(deviceId);
+
+    final deviceStatus = await _waitForStatus(
+      stream: connection.deviceStatusStream,
+      accepts: (DeviceStatus event) =>
+          event.readyForWrite || (event.hasError && !event.connected),
+      initialStatus: currentStatus,
+      fallbackStatus: connection.getCurrentDeviceStatus,
+    );
+
+    if (deviceStatus.hasError) {
+      throw BleConnectionException(
+        deviceStatus.error ?? 'Device connection failed',
+      );
+    }
+
+    if (deviceStatus.readyForWrite) {
+      return connection;
+    }
+
+    throw const BleSetupTimeoutException('Device connection timed out');
   }
 
   Future<DeviceStatus> _waitForStatus({
