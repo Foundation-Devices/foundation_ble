@@ -1,0 +1,419 @@
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:foundation_ble/foundation_ble.dart';
+import 'package:foundation_ble/src/method_channel/method_channel_ble_platform.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  const methodCodec = StandardMethodCodec();
+  final binding = TestDefaultBinaryMessengerBinding.instance;
+  final messenger = binding.defaultBinaryMessenger;
+  final methodChannel = MethodChannel(
+    'foundation_ble/bluetooth',
+    methodCodec,
+    messenger,
+  );
+
+  tearDown(() {
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      methodChannel,
+      null,
+    );
+    binding.defaultBinaryMessenger.setMockMessageHandler(
+      'foundation_ble/bluetooth/scan/stream',
+      null,
+    );
+  });
+
+  test(
+    'android adapter uses the root channel and forwards gatt transport',
+    () async {
+      final calls = <MethodCall>[];
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+        MethodCall call,
+      ) async {
+        calls.add(call);
+        switch (call.method) {
+          case 'getConnectedDevices':
+            return <Map<String, Object?>>[
+              <String, Object?>{
+                'peripheralId': 'device-a',
+                'peripheralName': 'Prime',
+                'isConnected': true,
+                'state': 2,
+                'bondState': true,
+              },
+            ];
+          case 'pair':
+            return null;
+          case 'removeDevice':
+            return true;
+          case 'apiLevel':
+            return 34;
+          case 'requestBlePermissions':
+            return true;
+        }
+        return null;
+      });
+
+      final platform = MethodChannelBlePlatform(
+        target: BleTarget.android,
+        binaryMessenger: messenger,
+      );
+
+      final granted = await platform.requestBlePermissions();
+      final knownDevices = await platform.getKnownDevices();
+      final androidPlatform = platform as AndroidBlePlatformCapability;
+      await androidPlatform.pair('device-a');
+      final apiLevel = await androidPlatform.getApiLevel();
+      final removed = await platform.removeDevice('device-a');
+      await platform.dispose();
+
+      expect(granted, isTrue);
+      expect(knownDevices, hasLength(1));
+      expect(knownDevices.single.peripheralId, 'device-a');
+      expect(apiLevel, 34);
+      expect(removed, isTrue);
+      expect(calls.map((call) => call.method), <String>[
+        'requestBlePermissions',
+        'getConnectedDevices',
+        'pair',
+        'apiLevel',
+        'removeDevice',
+      ]);
+
+      final getConnectedDevicesArguments = Map<String, Object?>.from(
+        calls[1].arguments as Map,
+      );
+      final getConnectedDevicesTransport = Map<String, Object?>.from(
+        getConnectedDevicesArguments['transport']! as Map,
+      );
+      expect(getConnectedDevicesTransport['mode'], 'gatt');
+
+      final pairArguments = Map<String, Object?>.from(
+        calls[2].arguments as Map,
+      );
+      final pairTransport = Map<String, Object?>.from(
+        pairArguments['transport']! as Map,
+      );
+      expect(pairArguments['deviceId'], 'device-a');
+      expect(pairTransport['mode'], 'gatt');
+    },
+  );
+
+  test('android startScan forwards mac, UUID, and transport filters', () async {
+    final calls = <MethodCall>[];
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+      MethodCall call,
+    ) async {
+      calls.add(call);
+      if (call.method == 'startScan') {
+        return <String, Object?>{'scanning': true};
+      }
+      return null;
+    });
+
+    final platform = MethodChannelBlePlatform(
+      target: BleTarget.android,
+      binaryMessenger: messenger,
+      transport: const BleTransport.l2cap(psm: 0x0085),
+    );
+
+    final started = await platform.startScan(
+      macId: 'AA:BB:CC:DD:EE:FF',
+      serviceUuid: '12345678-1234-1234-1234-1234567890AB',
+    );
+    await platform.dispose();
+
+    expect(started, isTrue);
+    expect(calls, hasLength(1));
+
+    final arguments = Map<String, Object?>.from(calls.single.arguments as Map);
+    final transport = Map<String, Object?>.from(arguments['transport']! as Map);
+    expect(arguments['deviceId'], 'AA:BB:CC:DD:EE:FF');
+    expect(arguments['macId'], 'AA:BB:CC:DD:EE:FF');
+    expect(arguments['uuid'], '12345678-1234-1234-1234-1234567890AB');
+    expect(arguments['serviceUuid'], '12345678-1234-1234-1234-1234567890AB');
+    expect(transport['mode'], 'l2cap');
+    expect(transport['psm'], 0x0085);
+  });
+
+  test('ios adapter exposes accessory setup capability', () async {
+    final calls = <MethodCall>[];
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+      MethodCall call,
+    ) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'requestBlePermissions':
+          return true;
+        case 'getAccessories':
+          return <Map<String, Object?>>[
+            <String, Object?>{
+              'peripheralId': 'ios-device',
+              'peripheralName': 'Prime iOS',
+              'isConnected': false,
+              'state': 0,
+              'bondState': false,
+            },
+          ];
+        case 'showAccessorySetup':
+          return <String, Object?>{
+            'deviceId': 'ios-device',
+            'pickerItemId': 'prime-orange',
+          };
+      }
+      return null;
+    });
+
+    final platform = MethodChannelBlePlatform(
+      target: BleTarget.ios,
+      binaryMessenger: messenger,
+    );
+    final granted = await platform.requestBlePermissions();
+    final knownDevices = await platform.getKnownDevices();
+    final iosCapability = platform as IosAccessorySetupCapability;
+    final setupResult = await iosCapability.showAccessorySetup(
+      items: const <IosAccessoryPickerItem>[
+        IosAccessoryPickerItem(
+          id: 'prime-orange',
+          name: 'Prime Orange',
+          imageAsset: 'assets/prime_orange.png',
+          descriptor: IosAccessoryDiscoveryDescriptor(
+            bluetoothNameSubstring: 'Prime',
+            bluetoothServiceUuid: '6E400001-B5A3-F393-E0A9-E50E24DCCA9E',
+            bluetoothRange: IosAccessoryDiscoveryRange.immediate,
+          ),
+        ),
+      ],
+    );
+
+    expect(granted, isTrue);
+    expect(knownDevices.single.peripheralId, 'ios-device');
+    expect(setupResult?.deviceId, 'ios-device');
+    expect(setupResult?.pickerItemId, 'prime-orange');
+    expect(calls.first.method, 'requestBlePermissions');
+    expect(calls[1].method, 'getAccessories');
+    expect(calls.last.method, 'showAccessorySetup');
+
+    final getAccessoriesArguments = Map<String, Object?>.from(
+      calls[1].arguments as Map,
+    );
+    final getAccessoriesTransport = Map<String, Object?>.from(
+      getAccessoriesArguments['transport']! as Map,
+    );
+    expect(getAccessoriesTransport['mode'], 'gatt');
+
+    final arguments = Map<String, Object?>.from(calls.last.arguments as Map);
+    final items = List<Object?>.from(arguments['items']! as List);
+    final item = Map<String, Object?>.from(items.single! as Map);
+    final descriptor = Map<String, Object?>.from(item['descriptor']! as Map);
+
+    expect(item['id'], 'prime-orange');
+    expect(item['name'], 'Prime Orange');
+    expect(item['imageAsset'], 'assets/prime_orange.png');
+    expect(descriptor['bluetoothNameSubstring'], 'Prime');
+    expect(
+      descriptor['bluetoothServiceUuid'],
+      '6E400001-B5A3-F393-E0A9-E50E24DCCA9E',
+    );
+    expect(descriptor['bluetoothRange'], 'immediate');
+  });
+
+  test(
+    'ios accessory setup rejects empty picker items before native call',
+    () async {
+      final calls = <MethodCall>[];
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+        MethodCall call,
+      ) async {
+        calls.add(call);
+        return null;
+      });
+
+      final platform = MethodChannelBlePlatform(
+        target: BleTarget.ios,
+        binaryMessenger: messenger,
+      );
+      final iosCapability = platform as IosAccessorySetupCapability;
+
+      await expectLater(
+        iosCapability.showAccessorySetup(
+          items: const <IosAccessoryPickerItem>[],
+        ),
+        throwsArgumentError,
+      );
+      expect(calls, isEmpty);
+    },
+  );
+
+  test('ios adapter forwards l2cap transport to native calls', () async {
+    final calls = <MethodCall>[];
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+      MethodCall call,
+    ) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'getAccessories':
+          return const <Map<String, Object?>>[];
+        case 'prepareDevice':
+          return true;
+        case 'reconnect':
+          return <String, Object?>{'reconnecting': true};
+        case 'startScan':
+          return <String, Object?>{'scanning': true};
+      }
+      return null;
+    });
+
+    final platform = MethodChannelBlePlatform(
+      target: BleTarget.ios,
+      binaryMessenger: messenger,
+      transport: const BleTransport.l2cap(psm: 123),
+    );
+
+    await platform.getKnownDevices();
+    await platform.prepareDevice('ios-device');
+    await platform.reconnect('ios-device');
+    final started = await platform.startScan(deviceId: 'ios-device');
+    final connection = platform.createConnection('ios-device');
+    await platform.dispose();
+
+    expect(started, isTrue);
+    expect(connection.transport, const BleTransport.l2cap(psm: 123));
+    expect(calls.map((call) => call.method), <String>[
+      'getAccessories',
+      'prepareDevice',
+      'reconnect',
+      'startScan',
+    ]);
+
+    for (final call in calls) {
+      final arguments = Map<String, Object?>.from(call.arguments as Map);
+      final transport = Map<String, Object?>.from(
+        arguments['transport']! as Map,
+      );
+      expect(transport['mode'], 'l2cap');
+      expect(transport['psm'], 123);
+    }
+  });
+
+  test('macos adapter forwards l2cap transport to native calls', () async {
+    final calls = <MethodCall>[];
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+      MethodCall call,
+    ) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'getAccessories':
+          return const <Map<String, Object?>>[];
+        case 'prepareDevice':
+          return true;
+        case 'reconnect':
+          return <String, Object?>{'reconnecting': true};
+        case 'startScan':
+          return <String, Object?>{'scanning': true};
+      }
+      return null;
+    });
+
+    final platform = MethodChannelBlePlatform(
+      target: BleTarget.macos,
+      binaryMessenger: messenger,
+      transport: const BleTransport.l2cap(psm: 123),
+    );
+
+    await platform.getKnownDevices();
+    await platform.prepareDevice('mac-device');
+    await platform.reconnect('mac-device');
+    final started = await platform.startScan(deviceId: 'mac-device');
+    final connection = platform.createConnection('mac-device');
+    await platform.dispose();
+
+    expect(started, isTrue);
+    expect(connection.transport, const BleTransport.l2cap(psm: 123));
+    expect(calls.map((call) => call.method), <String>[
+      'getAccessories',
+      'prepareDevice',
+      'reconnect',
+      'startScan',
+    ]);
+
+    for (final call in calls) {
+      final arguments = Map<String, Object?>.from(call.arguments as Map);
+      final transport = Map<String, Object?>.from(
+        arguments['transport']! as Map,
+      );
+      expect(transport['mode'], 'l2cap');
+      expect(transport['psm'], 123);
+    }
+  });
+
+  test('scanEvents parses event payloads from the event channel', () async {
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      methodChannel,
+      (MethodCall call) async => null,
+    );
+    binding.defaultBinaryMessenger.setMockMessageHandler(
+      'foundation_ble/bluetooth/scan/stream',
+      (ByteData? message) async {
+        final call = methodCodec.decodeMethodCall(message);
+        if (call.method == 'listen') {
+          Future<void>.delayed(Duration.zero, () {
+            messenger.handlePlatformMessage(
+              'foundation_ble/bluetooth/scan/stream',
+              methodCodec.encodeSuccessEnvelope(<String, Object?>{
+                'type': 'device_found',
+                'deviceId': 'scan-device',
+                'deviceName': 'Prime Scan',
+              }),
+              (_) {},
+            );
+          });
+        }
+        return methodCodec.encodeSuccessEnvelope(null);
+      },
+    );
+
+    final platform = MethodChannelBlePlatform(
+      target: BleTarget.macos,
+      binaryMessenger: messenger,
+    );
+
+    final event = await platform.scanEvents.first;
+
+    expect(event.type, BluetoothConnectionEventType.deviceFound);
+    expect(event.deviceId, 'scan-device');
+    expect(event.deviceName, 'Prime Scan');
+  });
+
+  test(
+    'macos adapter requests BLE permissions through the method channel',
+    () async {
+      final calls = <MethodCall>[];
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
+        MethodCall call,
+      ) async {
+        calls.add(call);
+        switch (call.method) {
+          case 'requestBlePermissions':
+            return true;
+        }
+        return null;
+      });
+
+      final platform = MethodChannelBlePlatform(
+        target: BleTarget.macos,
+        binaryMessenger: messenger,
+      );
+
+      final granted = await platform.requestBlePermissions();
+
+      expect(granted, isTrue);
+      expect(calls.map((call) => call.method), <String>[
+        'requestBlePermissions',
+      ]);
+    },
+  );
+}

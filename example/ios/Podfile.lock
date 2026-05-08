@@ -1,0 +1,28 @@
+PODS:
+  - Flutter (1.0.0)
+  - foundation_ble (0.0.1):
+    - Flutter
+  - integration_test (0.0.1):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - foundation_ble (from `.symlinks/plugins/foundation_ble/ios`)
+  - integration_test (from `.symlinks/plugins/integration_test/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  foundation_ble:
+    :path: ".symlinks/plugins/foundation_ble/ios"
+  integration_test:
+    :path: ".symlinks/plugins/integration_test/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  foundation_ble: ad0571877b01f029bf09bb2695abd1c618a1844f
+  integration_test: 252f60fa39af5e17c3aa9899d35d908a0721b573
+
+PODFILE CHECKSUM: f33ed30d7d857419eae96b22f2256491591f5e6a
+
+COCOAPODS: 1.16.2

@@ -1,0 +1,50 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+.metadata
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+.vscode/
+
+# Flutter / Dart / Pub
+# Libraries should not include pubspec.lock, per https://dart.dev/guides/libraries/private-files#pubspeclock
+/pubspec.lock
+**/doc/api/
+**/.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+/coverage/
+
+# Build outputs (all platforms)
+**/build/
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/local.properties
+
+# iOS / macOS — CocoaPods and generated files
+**/Pods/
+**/.symlinks/
+**/Flutter/Generated.xcconfig
+**/Flutter/ephemeral/
+**/GeneratedPluginRegistrant.*
+
+# Unsupported platforms (stub directories, no implementation)
+/linux/
+/windows/
