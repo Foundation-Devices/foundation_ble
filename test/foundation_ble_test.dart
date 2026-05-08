@@ -272,7 +272,7 @@ void main() {
       );
     });
 
-    test('connect pairs and bonds on Android', () async {
+    test('connect reconnects on Android without pairing or bonding', () async {
       final platform = _FakeAndroidPlatform();
       final connection = platform.connectionFor('android-device');
       connection.onStatusRequested = () {
@@ -282,16 +282,6 @@ void main() {
               type: BluetoothConnectionEventType.deviceConnected,
               connected: true,
               ready: true,
-              bonded: false,
-              peripheralId: 'android-device',
-            ),
-          );
-          connection.emitStatus(
-            const DeviceStatus(
-              type: BluetoothConnectionEventType.deviceConnected,
-              connected: true,
-              ready: true,
-              bonded: true,
               peripheralId: 'android-device',
             ),
           );
@@ -306,13 +296,13 @@ void main() {
       final result = await ble.connect('android-device');
 
       expect(result, same(connection));
-      expect(platform.pairedDeviceIds, <String>['android-device']);
-      expect((connection as _FakeAndroidBleConnection).bondCalls, 1);
+      expect(platform.pairedDeviceIds, isEmpty);
+      expect((connection as _FakeAndroidBleConnection).bondCalls, 0);
 
       await ble.dispose();
     });
 
-    test('connect surfaces Android pairing timeout', () async {
+    test('connect surfaces Android connection timeout', () async {
       final platform = _FakeAndroidPlatform();
       final ble = FoundationBle(
         platform: platform,
@@ -325,7 +315,7 @@ void main() {
           isA<BleSetupTimeoutException>().having(
             (BleSetupTimeoutException error) => error.message,
             'message',
-            'Pairing timed out',
+            'Device connection timed out',
           ),
         ),
       );
