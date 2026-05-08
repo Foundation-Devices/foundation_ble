@@ -29,6 +29,7 @@ class BleConnection: NSObject, CBPeripheralDelegate {
 
   private(set) var connectedPeripheral: CBPeripheral?
   private var lastKnownPeripheralName: String?
+  private(set) var isCleanedUp = false
 
   var peripheralId: String {
     deviceId
@@ -194,6 +195,11 @@ class BleConnection: NSObject, CBPeripheralDelegate {
   }
 
   func cleanup() {
+    if isCleanedUp {
+      return
+    }
+    isCleanedUp = true
+
     cleanupTransport()
 
     let clearHandlers = {
@@ -260,6 +266,12 @@ class BleConnection: NSObject, CBPeripheralDelegate {
       bond(result: result)
     case "getCurrentDeviceStatus":
       getCurrentDeviceStatus(result: result)
+    case "dispose":
+      if isConnected() {
+        disconnectTransport(result: { _ in })
+      }
+      cleanup()
+      result(nil)
     case "disconnect":
       disconnectTransport(result: result)
     case "getConnectedPeripheralId":

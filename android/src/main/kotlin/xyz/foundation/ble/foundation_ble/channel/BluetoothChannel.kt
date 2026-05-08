@@ -36,10 +36,7 @@ import java.util.UUID
 import xyz.foundation.ble.foundation_ble.connection.BleConnection
 import xyz.foundation.ble.foundation_ble.connection.BleConnectionCallback
 import xyz.foundation.ble.foundation_ble.connection.gatt.GattBleConnection
-import xyz.foundation.ble.foundation_ble.connection.l2cap.L2capBleConnection
 import xyz.foundation.ble.foundation_ble.model.BluetoothConnectionEventType
-import xyz.foundation.ble.foundation_ble.transport.BleTransportConfig
-import xyz.foundation.ble.foundation_ble.transport.BleTransportMode
 import xyz.foundation.ble.foundation_ble.transport.SessionChannelNames
 
 class BluetoothChannel(
@@ -59,7 +56,6 @@ class BluetoothChannel(
     }
 
     private data class TrackedBleConnection(
-        val transportConfig: BleTransportConfig,
         val connection: BleConnection
     )
 
@@ -90,7 +86,6 @@ class BluetoothChannel(
     private var pendingEnableResult: MethodChannel.Result? = null
     private var activeScanTargetMacId: String? = null
     private var activeScanServiceUuid: UUID? = null
-    private var activeScanTransportConfig: BleTransportConfig? = null
     private var hasAttachedActivity = false
     private val stopScanRunnable: Runnable = Runnable {
         stopScanInternal(sendEvent = true)
@@ -256,11 +251,7 @@ class BluetoothChannel(
             return
         }
 
-        val transportConfig = resolveTransportConfig(call.arguments as? Map<*, *>, result) ?: return
-        val accessories = when (transportConfig.mode) {
-            BleTransportMode.GATT -> buildGattConnectedDevices()
-            BleTransportMode.L2CAP -> buildL2capConnectedDevices()
-        }
+        val accessories = buildGattConnectedDevices()
 
         result.success(accessories)
     }
@@ -285,54 +276,32 @@ class BluetoothChannel(
             return
         }
 
-        val transportConfig = resolveTransportConfig(call.arguments as? Map<*, *>, result) ?: return
         val deviceId = call.argument<String>("deviceId")
         if (!deviceId.isNullOrBlank()) {
             knownDeviceMacs.add(deviceId)
-            getOrCreateDevice(deviceId, transportConfig)
+            getOrCreateDevice(deviceId)
         }
-        startDeviceScan(call, result, transportConfig)
+        startDeviceScan(call, result)
     }
 
-    private fun getOrCreateDevice(
-        deviceId: String,
-        transportConfig: BleTransportConfig
-    ): BleConnection {
+    private fun getOrCreateDevice(deviceId: String): BleConnection {
         val existingDevice = devices[deviceId]
-        if (existingDevice != null) {
-            if (existingDevice.transportConfig == transportConfig) {
-                return existingDevice.connection
-            }
-
-            existingDevice.connection.cleanup()
+        if (existingDevice != null && !existingDevice.connection.isCleanedUp) {
+            return existingDevice.connection
         }
 
-        val connection = when (transportConfig.mode) {
-            BleTransportMode.GATT -> GattBleConnection(
-                deviceId = deviceId,
-                context = context,
-                bluetoothManager = bluetoothManager,
-                binaryMessenger = binaryMessenger,
-                callback = this,
-                channelNames = channelNames,
-                scope = scope
-            )
+        existingDevice?.connection?.cleanup()
 
-            BleTransportMode.L2CAP -> L2capBleConnection(
-                deviceId = deviceId,
-                context = context,
-                bluetoothManager = bluetoothManager,
-                binaryMessenger = binaryMessenger,
-                callback = this,
-                channelNames = channelNames,
-                psm = transportConfig.psm!!,
-                scope = scope
-            )
-        }
-        devices[deviceId] = TrackedBleConnection(
-            transportConfig = transportConfig,
-            connection = connection
+        val connection = GattBleConnection(
+            deviceId = deviceId,
+            context = context,
+            bluetoothManager = bluetoothManager,
+            binaryMessenger = binaryMessenger,
+            callback = this,
+            channelNames = channelNames,
+            scope = scope
         )
+        devices[deviceId] = TrackedBleConnection(connection = connection)
         return connection
     }
 
@@ -344,9 +313,7 @@ class BluetoothChannel(
         }
 
         try {
-            val transportConfig =
-                resolveTransportConfig(call.arguments as? Map<*, *>, result) ?: return
-            getOrCreateDevice(deviceId, transportConfig)
+            getOrCreateDevice(deviceId)
             result.success(true)
         } catch (error: Exception) {
             result.error("PREPARE_ERROR", "Failed to prepare device: ${error.message}", null)
@@ -373,9 +340,7 @@ class BluetoothChannel(
                 return
             }
 
-            val transportConfig =
-                resolveTransportConfig(call.arguments as? Map<*, *>, result) ?: return
-            val bleConnection = getOrCreateDevice(deviceId, transportConfig)
+            val bleConnection = getOrCreateDevice(deviceId)
             val remoteDevice = adapter.getRemoteDevice(deviceId)
             bleConnection.connect(remoteDevice)
             result.success(true)
@@ -386,16 +351,6 @@ class BluetoothChannel(
 
     @SuppressLint("MissingPermission")
     private fun startDeviceScan(call: MethodCall, result: MethodChannel.Result) {
-        val transportConfig = resolveTransportConfig(call.arguments as? Map<*, *>, result) ?: return
-        startDeviceScan(call, result, transportConfig)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startDeviceScan(
-        call: MethodCall,
-        result: MethodChannel.Result,
-        transportConfig: BleTransportConfig
-    ) {
         if (!checkBluetoothPermissions()) {
             result.error("PERMISSION_ERROR", "Bluetooth scan permission not granted", null)
             return
@@ -440,15 +395,11 @@ class BluetoothChannel(
             return
         }
 
-        Log.i(
-            TAG,
-            "startDeviceScan: macId=$targetMacId, uuid=$targetServiceUuidRaw, mode=${transportConfig.mode}, psm=${transportConfig.psm}"
-        )
+        Log.i(TAG, "startDeviceScan: macId=$targetMacId, uuid=$targetServiceUuidRaw")
         stopScanInternal(sendEvent = false)
 
         activeScanTargetMacId = targetMacId
         activeScanServiceUuid = targetServiceUuid
-        activeScanTransportConfig = transportConfig
 
         val scanFilters = buildScanFilters(
             targetMacId = targetMacId,
@@ -468,12 +419,10 @@ class BluetoothChannel(
         } catch (error: SecurityException) {
             activeScanTargetMacId = null
             activeScanServiceUuid = null
-            activeScanTransportConfig = null
             result.error("SECURITY_ERROR", "Missing scan permission: ${error.message}", null)
         } catch (error: Exception) {
             activeScanTargetMacId = null
             activeScanServiceUuid = null
-            activeScanTransportConfig = null
             result.error("SCAN_ERROR", "Failed to start scan: ${error.message}", null)
         }
     }
@@ -501,7 +450,6 @@ class BluetoothChannel(
         } finally {
             activeScanTargetMacId = null
             activeScanServiceUuid = null
-            activeScanTransportConfig = null
             if (sendEvent) {
                 sendScanEvent(BluetoothConnectionEventType.SCAN_STOPPED)
             }
@@ -542,9 +490,8 @@ class BluetoothChannel(
                 )
 
                 if (isTargetedMatch && (targetServiceUuid == null || matchesServiceUuid)) {
-                    val transportConfig = activeScanTransportConfig ?: BleTransportConfig.gatt()
                     stopScanInternal(sendEvent = true)
-                    connectToDevice(device, transportConfig)
+                    connectToDevice(device)
                 }
             }
         }
@@ -559,7 +506,6 @@ class BluetoothChannel(
             mainHandler.removeCallbacks(stopScanRunnable)
             activeScanTargetMacId = null
             activeScanServiceUuid = null
-            activeScanTransportConfig = null
             sendScanEvent(BluetoothConnectionEventType.SCAN_ERROR)
         }
     }
@@ -606,16 +552,13 @@ class BluetoothChannel(
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectToDevice(
-        device: BluetoothDevice,
-        transportConfig: BleTransportConfig = activeScanTransportConfig ?: BleTransportConfig.gatt()
-    ) {
+    private fun connectToDevice(device: BluetoothDevice) {
         if (!checkBluetoothPermissions()) {
             return
         }
 
         knownDeviceMacs.add(device.address)
-        getOrCreateDevice(device.address, transportConfig).connect(device)
+        getOrCreateDevice(device.address).connect(device)
     }
 
     private fun setupBondingReceiver() {
@@ -780,52 +723,6 @@ class BluetoothChannel(
             }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun buildL2capConnectedDevices(): List<Map<String, Any?>> {
-        val adapter = bluetoothAdapter ?: return emptyList()
-        val devicesById = linkedMapOf<String, Pair<BluetoothDevice, TrackedBleConnection>>()
-
-        devices.values
-            .asSequence()
-            .filter { trackedConnection ->
-                trackedConnection.transportConfig.mode == BleTransportMode.L2CAP
-            }
-            .forEach { trackedConnection ->
-                val connection = trackedConnection.connection
-                val currentDevice = connection.currentDevice
-                if (currentDevice != null) {
-                    devicesById[currentDevice.address] = currentDevice to trackedConnection
-                } else {
-                    try {
-                        val remoteDevice = adapter.getRemoteDevice(connection.deviceId)
-                        devicesById[remoteDevice.address] = remoteDevice to trackedConnection
-                    } catch (_: IllegalArgumentException) {
-                    }
-                }
-            }
-
-        return devicesById.values.map { (device, trackedConnection) ->
-            val isConnected = trackedConnection.connection.isConnected()
-            val isBonded = device.bondState == BluetoothDevice.BOND_BONDED
-            val deviceName = device.name ?: "Unknown Device"
-
-            mapOf(
-                "deviceId" to device.address,
-                "name" to deviceName,
-                "bonded" to isBonded,
-                "peripheralId" to device.address,
-                "peripheralName" to deviceName,
-                "isConnected" to isConnected,
-                "state" to if (isConnected) {
-                    BluetoothProfile.STATE_CONNECTED
-                } else {
-                    BluetoothProfile.STATE_DISCONNECTED
-                },
-                "bondState" to isBonded
-            )
-        }
-    }
-
     fun cleanup() {
         try {
             unregisterBondingReceiver()
@@ -841,32 +738,10 @@ class BluetoothChannel(
         pendingEnableResult = null
         activeScanTargetMacId = null
         activeScanServiceUuid = null
-        activeScanTransportConfig = null
         scanEventSink = null
         bondingReceiver = null
         methodChannel.setMethodCallHandler(null)
         scanEventChannel.setStreamHandler(null)
-    }
-
-    private fun resolveTransportConfig(
-        arguments: Map<*, *>?,
-        result: MethodChannel.Result
-    ): BleTransportConfig? {
-        return try {
-            val config = BleTransportConfig.fromArguments(
-                arguments = arguments,
-                defaultConfig = BleTransportConfig.gatt()
-            )
-            if (config.mode == BleTransportMode.L2CAP &&
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-            ) {
-                throw IllegalArgumentException("Android L2CAP requires API 29 or newer")
-            }
-            config
-        } catch (error: IllegalArgumentException) {
-            result.error("INVALID_TRANSPORT", error.message, null)
-            null
-        }
     }
 
     private fun detachActivity(cancelPendingResults: Boolean) {

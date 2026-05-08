@@ -1,5 +1,4 @@
 import 'ble_connection.dart';
-import 'ble_transport.dart';
 import 'method_channel/method_channel_ble_platform.dart';
 import 'models/ble_device_info.dart';
 import 'models/ble_scan_event.dart';
@@ -14,9 +13,7 @@ abstract class BlePlatform extends PlatformInterface {
   static final Object _token = Object();
   static BlePlatform? _instance;
 
-  static BlePlatform get instance => _instance ??= MethodChannelBlePlatform(
-    transport: const BleTransport.gatt(),
-  );
+  static BlePlatform get instance => _instance ??= MethodChannelBlePlatform();
 
   static set instance(BlePlatform instance) {
     PlatformInterface.verifyToken(instance, _token);

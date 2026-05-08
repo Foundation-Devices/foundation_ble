@@ -57,6 +57,8 @@ abstract class BleConnection(
 
     protected var connectionEventSink: EventChannel.EventSink? = null
     protected var connectedDevice: BluetoothDevice? = null
+    var isCleanedUp: Boolean = false
+        private set
 
     val currentDevice: BluetoothDevice?
         get() = connectedDevice
@@ -227,6 +229,10 @@ abstract class BleConnection(
     }
 
     open fun cleanup() {
+        if (isCleanedUp) {
+            return
+        }
+        isCleanedUp = true
         cleanupTransport()
         methodChannel.setMethodCallHandler(null)
         bleWriteChannel.setMessageHandler(null)

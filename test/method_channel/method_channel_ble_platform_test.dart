@@ -27,7 +27,7 @@ void main() {
   });
 
   test(
-    'android adapter uses the root channel and forwards gatt transport',
+    'android adapter uses the root channel',
     () async {
       final calls = <MethodCall>[];
       binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
@@ -83,26 +83,14 @@ void main() {
         'removeDevice',
       ]);
 
-      final getConnectedDevicesArguments = Map<String, Object?>.from(
-        calls[1].arguments as Map,
-      );
-      final getConnectedDevicesTransport = Map<String, Object?>.from(
-        getConnectedDevicesArguments['transport']! as Map,
-      );
-      expect(getConnectedDevicesTransport['mode'], 'gatt');
-
       final pairArguments = Map<String, Object?>.from(
         calls[2].arguments as Map,
       );
-      final pairTransport = Map<String, Object?>.from(
-        pairArguments['transport']! as Map,
-      );
       expect(pairArguments['deviceId'], 'device-a');
-      expect(pairTransport['mode'], 'gatt');
     },
   );
 
-  test('android startScan forwards mac, UUID, and transport filters', () async {
+  test('android startScan forwards mac and UUID filters', () async {
     final calls = <MethodCall>[];
     binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
       MethodCall call,
@@ -117,7 +105,6 @@ void main() {
     final platform = MethodChannelBlePlatform(
       target: BleTarget.android,
       binaryMessenger: messenger,
-      transport: const BleTransport.l2cap(psm: 0x0085),
     );
 
     final started = await platform.startScan(
@@ -130,13 +117,10 @@ void main() {
     expect(calls, hasLength(1));
 
     final arguments = Map<String, Object?>.from(calls.single.arguments as Map);
-    final transport = Map<String, Object?>.from(arguments['transport']! as Map);
     expect(arguments['deviceId'], 'AA:BB:CC:DD:EE:FF');
     expect(arguments['macId'], 'AA:BB:CC:DD:EE:FF');
     expect(arguments['uuid'], '12345678-1234-1234-1234-1234567890AB');
     expect(arguments['serviceUuid'], '12345678-1234-1234-1234-1234567890AB');
-    expect(transport['mode'], 'l2cap');
-    expect(transport['psm'], 0x0085);
   });
 
   test('ios adapter exposes accessory setup capability', () async {
@@ -197,14 +181,6 @@ void main() {
     expect(calls[1].method, 'getAccessories');
     expect(calls.last.method, 'showAccessorySetup');
 
-    final getAccessoriesArguments = Map<String, Object?>.from(
-      calls[1].arguments as Map,
-    );
-    final getAccessoriesTransport = Map<String, Object?>.from(
-      getAccessoriesArguments['transport']! as Map,
-    );
-    expect(getAccessoriesTransport['mode'], 'gatt');
-
     final arguments = Map<String, Object?>.from(calls.last.arguments as Map);
     final items = List<Object?>.from(arguments['items']! as List);
     final item = Map<String, Object?>.from(items.single! as Map);
@@ -247,108 +223,6 @@ void main() {
       expect(calls, isEmpty);
     },
   );
-
-  test('ios adapter forwards l2cap transport to native calls', () async {
-    final calls = <MethodCall>[];
-    binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
-      MethodCall call,
-    ) async {
-      calls.add(call);
-      switch (call.method) {
-        case 'getAccessories':
-          return const <Map<String, Object?>>[];
-        case 'prepareDevice':
-          return true;
-        case 'reconnect':
-          return <String, Object?>{'reconnecting': true};
-        case 'startScan':
-          return <String, Object?>{'scanning': true};
-      }
-      return null;
-    });
-
-    final platform = MethodChannelBlePlatform(
-      target: BleTarget.ios,
-      binaryMessenger: messenger,
-      transport: const BleTransport.l2cap(psm: 123),
-    );
-
-    await platform.getKnownDevices();
-    await platform.prepareDevice('ios-device');
-    await platform.reconnect('ios-device');
-    final started = await platform.startScan(deviceId: 'ios-device');
-    final connection = platform.createConnection('ios-device');
-    await platform.dispose();
-
-    expect(started, isTrue);
-    expect(connection.transport, const BleTransport.l2cap(psm: 123));
-    expect(calls.map((call) => call.method), <String>[
-      'getAccessories',
-      'prepareDevice',
-      'reconnect',
-      'startScan',
-    ]);
-
-    for (final call in calls) {
-      final arguments = Map<String, Object?>.from(call.arguments as Map);
-      final transport = Map<String, Object?>.from(
-        arguments['transport']! as Map,
-      );
-      expect(transport['mode'], 'l2cap');
-      expect(transport['psm'], 123);
-    }
-  });
-
-  test('macos adapter forwards l2cap transport to native calls', () async {
-    final calls = <MethodCall>[];
-    binding.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (
-      MethodCall call,
-    ) async {
-      calls.add(call);
-      switch (call.method) {
-        case 'getAccessories':
-          return const <Map<String, Object?>>[];
-        case 'prepareDevice':
-          return true;
-        case 'reconnect':
-          return <String, Object?>{'reconnecting': true};
-        case 'startScan':
-          return <String, Object?>{'scanning': true};
-      }
-      return null;
-    });
-
-    final platform = MethodChannelBlePlatform(
-      target: BleTarget.macos,
-      binaryMessenger: messenger,
-      transport: const BleTransport.l2cap(psm: 123),
-    );
-
-    await platform.getKnownDevices();
-    await platform.prepareDevice('mac-device');
-    await platform.reconnect('mac-device');
-    final started = await platform.startScan(deviceId: 'mac-device');
-    final connection = platform.createConnection('mac-device');
-    await platform.dispose();
-
-    expect(started, isTrue);
-    expect(connection.transport, const BleTransport.l2cap(psm: 123));
-    expect(calls.map((call) => call.method), <String>[
-      'getAccessories',
-      'prepareDevice',
-      'reconnect',
-      'startScan',
-    ]);
-
-    for (final call in calls) {
-      final arguments = Map<String, Object?>.from(call.arguments as Map);
-      final transport = Map<String, Object?>.from(
-        arguments['transport']! as Map,
-      );
-      expect(transport['mode'], 'l2cap');
-      expect(transport['psm'], 123);
-    }
-  });
 
   test('scanEvents parses event payloads from the event channel', () async {
     binding.defaultBinaryMessenger.setMockMethodCallHandler(
