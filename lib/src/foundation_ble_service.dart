@@ -344,11 +344,6 @@ class FoundationBle {
     bool reset = false,
   }) async {
     final selectedPlatform = _platformForTransport(transport);
-
-    if (selectedPlatform is AndroidBlePlatformCapability) {
-      await (selectedPlatform as AndroidBlePlatformCapability).pair(deviceId);
-    }
-
     await selectedPlatform.reconnect(deviceId);
 
     final connection = getDeviceConnection(
@@ -373,13 +368,10 @@ class FoundationBle {
     }
 
     if (deviceStatus.readyForWrite) {
-      if (connection is AndroidBleConnectionCapability) {
-        await (connection as AndroidBleConnectionCapability).bond();
-      }
       return connection;
     }
 
-    throw const BleSetupTimeoutException('Pairing timed out');
+    throw const BleSetupTimeoutException('Device connection timed out');
   }
 
   BlePlatform _platformForTransport(BleTransport transport) {
