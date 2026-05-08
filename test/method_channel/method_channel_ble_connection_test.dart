@@ -1,6 +1,5 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:foundation_ble/foundation_ble.dart';
 import 'package:foundation_ble/src/method_channel/method_channel_ble_connection.dart';
 
 void main() {
@@ -44,6 +43,38 @@ void main() {
       null,
     );
   });
+
+  test(
+    'does not activate status event channel until stream is listened to',
+    () async {
+      var listenCalls = 0;
+      binding.defaultBinaryMessenger.setMockMessageHandler(
+        'foundation_ble/bluetooth/connection/stream/device-a',
+        (ByteData? message) async {
+          final call = methodCodec.decodeMethodCall(message);
+          if (call.method == 'listen') {
+            listenCalls += 1;
+          }
+          return methodCodec.encodeSuccessEnvelope(null);
+        },
+      );
+
+      final connection = MethodChannelBleConnection(
+        deviceId: 'device-a',
+        binaryMessenger: messenger,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      expect(listenCalls, 0);
+
+      final subscription = connection.deviceStatusStream.listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      expect(listenCalls, 1);
+
+      await subscription.cancel();
+      await connection.dispose();
+    },
+  );
 
   test(
     'connection adapter maps methods, read/write, and status streams',
@@ -112,7 +143,6 @@ void main() {
 
       final connection = AndroidMethodChannelBleConnection(
         deviceId: 'device-a',
-        transport: const BleTransport.l2cap(psm: 0x0085),
         binaryMessenger: messenger,
       );
 
@@ -128,7 +158,6 @@ void main() {
 
       expect(status.connected, isTrue);
       expect(connection.lastDeviceStatus.connected, isTrue);
-      expect(connection.transport, const BleTransport.l2cap(psm: 0x0085));
       expect(writeResult, isTrue);
       expect(reconnectResult, isTrue);
       expect(peripheralId, 'device-a');

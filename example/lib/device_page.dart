@@ -22,20 +22,6 @@ class ExampleBleDevice {
   }
 }
 
-enum ExampleTransportMode { gatt, l2cap }
-
-extension on ExampleTransportMode {
-  String get label => switch (this) {
-    ExampleTransportMode.gatt => 'GATT',
-    ExampleTransportMode.l2cap => 'L2CAP',
-  };
-
-  BleTransport get transport => switch (this) {
-    ExampleTransportMode.gatt => BleTransport.gatt(),
-    ExampleTransportMode.l2cap => const BleTransport.l2cap(psm: 0x0081),
-  };
-}
-
 class _BleLogEntry {
   const _BleLogEntry({required this.timestamp, required this.message});
 
@@ -110,28 +96,6 @@ class _DevicePageState extends State<DevicePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text('Connection', style: theme.textTheme.titleLarge),
-                      const SizedBox(height: 12),
-                      SegmentedButton<ExampleTransportMode>(
-                        segments: <ButtonSegment<ExampleTransportMode>>[
-                          const ButtonSegment<ExampleTransportMode>(
-                            value: ExampleTransportMode.gatt,
-                            label: Text('GATT'),
-                          ),
-                          ButtonSegment<ExampleTransportMode>(
-                            value: ExampleTransportMode.l2cap,
-                            enabled: _controller.canUseL2cap,
-                            label: const Text('L2CAP'),
-                          ),
-                        ],
-                        selected: <ExampleTransportMode>{
-                          _controller.selectedTransport,
-                        },
-                        onSelectionChanged:
-                            (Set<ExampleTransportMode> selection) {
-                              final transport = selection.first;
-                              _controller.setTransport(transport);
-                            },
-                      ),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 12,
@@ -330,7 +294,6 @@ class _BleDemoController extends ChangeNotifier {
 
   static const int _largeHexTransferBytes = 5 * 1024 * 1024;
   static const int _gattWriteChunkSize = 240;
-  static const int _l2capWriteChunkSize = 64 * 1024;
   static const int _progressUpdateIntervalBytes = 64 * 1024;
 
   final ExampleBleDevice device;
@@ -348,8 +311,7 @@ class _BleDemoController extends ChangeNotifier {
   StreamSubscription<Uint8List>? _readSubscription;
   final List<_BleLogEntry> _logs = <_BleLogEntry>[];
 
-  ExampleTransportMode _selectedTransport = ExampleTransportMode.gatt;
-  String _statusMessage = 'Choose a transport and connect.';
+  String _statusMessage = 'Connect to get started.';
   String? _busyAction;
   double? _transferProgress;
   bool _disposed = false;
@@ -362,10 +324,6 @@ class _BleDemoController extends ChangeNotifier {
   bool get isMacOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
   bool get needsBlePermissions => isAndroid || isMacOS;
-
-  bool get canUseL2cap => isAndroid || isMacOS || isIOS;
-
-  ExampleTransportMode get selectedTransport => _selectedTransport;
 
   String get statusMessage => _statusMessage;
 
@@ -387,39 +345,7 @@ class _BleDemoController extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _resetBleSession(clearLogs: true);
-    _setStatus('Choose a transport and connect.');
-  }
-
-  Future<void> setTransport(ExampleTransportMode transport) async {
-    const label = 'Switch Transport';
-    if (isBusy) {
-      return;
-    }
-
-    _setBusy(label);
-    try {
-      await _setTransport(transport);
-    } catch (error) {
-      _setStatus('$label failed: $error');
-    } finally {
-      _setBusy(null);
-    }
-  }
-
-  Future<void> _setTransport(ExampleTransportMode transport) async {
-    if (_selectedTransport == transport) {
-      return;
-    }
-
-    if (transport == ExampleTransportMode.l2cap && !canUseL2cap) {
-      _setStatus('L2CAP is only available on Android and macOS in this demo.');
-      return;
-    }
-
-    _selectedTransport = transport;
-    _clearTransferProgress(notify: false);
-    await _resetBleSession(clearLogs: true);
-    _setStatus('Transport set to ${transport.label}.');
+    _setStatus('Connect to get started.');
   }
 
   Future<void> connect() async {
@@ -442,17 +368,10 @@ class _BleDemoController extends ChangeNotifier {
     _clearTransferProgress(notify: false);
     await _ensureBlePermissions();
 
-    final transport = _selectedTransport.transport;
-    final connection = await _ble.connect(
-      device.macId,
-      transport: transport,
-      reset: true,
-    );
+    final connection = await _ble.connect(device.macId);
 
     await _bindConnection(connection);
-    _setStatus(
-      'Connected to ${connection.deviceId} via ${connection.transport.mode.name.toUpperCase()}.',
-    );
+    _setStatus('Connected to ${connection.deviceId}.');
   }
 
   Future<void> disconnect() async {
@@ -566,9 +485,7 @@ class _BleDemoController extends ChangeNotifier {
       return;
     }
 
-    if (isAndroid &&
-        _selectedTransport == ExampleTransportMode.gatt &&
-        _connection is AndroidBleConnectionCapability) {
+    if (isAndroid && _connection is AndroidBleConnectionCapability) {
       final androidConnection = _connection! as AndroidBleConnectionCapability;
       await androidConnection.requestPhy2();
       await Future.delayed(Duration(milliseconds: 500));
@@ -586,9 +503,7 @@ class _BleDemoController extends ChangeNotifier {
       return;
     }
 
-    final chunkSize = _selectedTransport == ExampleTransportMode.gatt
-        ? _gattWriteChunkSize
-        : _l2capWriteChunkSize;
+    const chunkSize = _gattWriteChunkSize;
     final payloadTemplate = _buildRepeatedPayload(seed, chunkSize);
     final stopwatch = Stopwatch()..start();
     var bytesWritten = 0;

@@ -111,7 +111,7 @@ void main() {
 
     expect(find.text('Connection'), findsOneWidget);
     expect(find.text('Write 5 MB Hex Test'), findsOneWidget);
-    expect(find.text('Choose a transport and connect.'), findsOneWidget);
+    expect(find.text('Connect to get started.'), findsOneWidget);
 
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -600));
     await tester.pump(const Duration(milliseconds: 200));
@@ -121,27 +121,5 @@ void main() {
       find.text('No BLE messages yet. Connect and wait for incoming data.'),
       findsOneWidget,
     );
-  });
-
-  testWidgets('allows selecting l2cap on macOS', (WidgetTester tester) async {
-    addTearDown(() {
-      debugDefaultTargetPlatformOverride = null;
-    });
-
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicePage(device: ExampleBleDevice(macId: '00:11:22:33:44:55')),
-      ),
-    );
-    await tester.pump();
-
-    await tester.tap(find.text('L2CAP'));
-    await tester.pump();
-
-    expect(find.text('Transport set to L2CAP.'), findsOneWidget);
-
-    debugDefaultTargetPlatformOverride = null;
   });
 }

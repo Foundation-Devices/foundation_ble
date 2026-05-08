@@ -9,25 +9,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('FoundationBle', () {
-    test('connect rejects invalid l2cap psm values', () {
-      expect(
-        () => FoundationBle().connect(
-          'device-a',
-          transport: const BleTransport.l2cap(psm: 0),
-        ),
-        throwsArgumentError,
-      );
-    });
-
-    test('connect rejects l2cap transport with a custom platform', () {
-      expect(
-        () => FoundationBle(
-          platform: _FakeAndroidPlatform(),
-        ).connect('device-a', transport: const BleTransport.l2cap(psm: 123)),
-        throwsA(isA<BleTransportException>()),
-      );
-    });
-
     test('requestBlePermissions delegates to the platform', () async {
       final platform = _FakeMacosPlatform();
       final ble = FoundationBle(platform: platform);
@@ -60,17 +41,14 @@ void main() {
       await ble.dispose();
     });
 
-    test('reuses and resets device connections', () async {
+    test('reuses device connections', () async {
       final platform = _FakeMacosPlatform();
       final ble = FoundationBle(platform: platform);
 
       final first = ble.getDeviceConnection('device-a');
       final second = ble.getDeviceConnection('device-a');
-      final third = ble.getDeviceConnection('device-a', reset: true);
 
       expect(identical(first, second), isTrue);
-      expect(identical(first, third), isFalse);
-      expect((first as _FakeBleConnection).disposed, isTrue);
 
       await ble.dispose();
     });
@@ -203,6 +181,56 @@ void main() {
       await ble.dispose();
     });
 
+    test('connect waits for macOS ready state before returning', () async {
+      final platform = _FakeMacosPlatform();
+      final connection = platform.connectionFor('mac-device');
+      platform.onReconnect = (_) {
+        Future<void>.delayed(Duration.zero, () {
+          connection.emitStatus(
+            const DeviceStatus(
+              type: BluetoothConnectionEventType.deviceConnected,
+              connected: true,
+              ready: false,
+              peripheralId: 'mac-device',
+            ),
+          );
+        });
+      };
+
+      final ble = FoundationBle(
+        platform: platform,
+        setupTimeout: const Duration(milliseconds: 50),
+      );
+
+      var completed = false;
+      final future = ble.connect('mac-device')
+        ..then((_) {
+          completed = true;
+        });
+
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(completed, isFalse);
+
+      connection.emitStatus(
+        const DeviceStatus(
+          type: BluetoothConnectionEventType.deviceConnected,
+          connected: true,
+          ready: true,
+          peripheralId: 'mac-device',
+        ),
+      );
+
+      final result = await future;
+
+      expect(result, same(connection));
+      expect(platform.preparedDeviceIds, <String>['mac-device']);
+      expect(platform.reconnectedDeviceIds, <String>['mac-device']);
+
+      await ble.dispose();
+    });
+
     test('connect waits for iOS ready state before returning', () async {
       final platform = _FakeIosPlatform();
       final connection = platform.connectionFor('ios-device');
@@ -253,6 +281,40 @@ void main() {
       await ble.dispose();
     });
 
+    test(
+      'connect accepts iOS readiness from non-connection status events',
+      () async {
+        final platform = _FakeIosPlatform();
+        final connection = platform.connectionFor('ios-device');
+        final ble = FoundationBle(
+          platform: platform,
+          setupTimeout: const Duration(seconds: 1),
+        );
+
+        final future = ble.connect('ios-device');
+
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        connection.emitStatus(
+          const DeviceStatus(
+            type: BluetoothConnectionEventType.bondBonded,
+            connected: true,
+            ready: true,
+            bonded: true,
+            peripheralId: 'ios-device',
+          ),
+        );
+
+        final result = await future.timeout(const Duration(milliseconds: 50));
+
+        expect(result, same(connection));
+        expect(platform.reconnectedDeviceIds, <String>['ios-device']);
+
+        await ble.dispose();
+      },
+    );
+
     test('connect surfaces macOS setup timeout', () async {
       final platform = _FakeMacosPlatform();
       final ble = FoundationBle(
@@ -272,7 +334,7 @@ void main() {
       );
     });
 
-    test('connect pairs and bonds on Android', () async {
+    test('connect reconnects on Android without pairing or bonding', () async {
       final platform = _FakeAndroidPlatform();
       final connection = platform.connectionFor('android-device');
       connection.onStatusRequested = () {
@@ -282,16 +344,6 @@ void main() {
               type: BluetoothConnectionEventType.deviceConnected,
               connected: true,
               ready: true,
-              bonded: false,
-              peripheralId: 'android-device',
-            ),
-          );
-          connection.emitStatus(
-            const DeviceStatus(
-              type: BluetoothConnectionEventType.deviceConnected,
-              connected: true,
-              ready: true,
-              bonded: true,
               peripheralId: 'android-device',
             ),
           );
@@ -306,13 +358,82 @@ void main() {
       final result = await ble.connect('android-device');
 
       expect(result, same(connection));
-      expect(platform.pairedDeviceIds, <String>['android-device']);
-      expect((connection as _FakeAndroidBleConnection).bondCalls, 1);
+      expect(platform.pairedDeviceIds, isEmpty);
+      expect((connection as _FakeAndroidBleConnection).bondCalls, 0);
 
       await ble.dispose();
     });
 
-    test('connect surfaces Android pairing timeout', () async {
+    test(
+      'connect does not reconnect Android device that is already ready',
+      () async {
+        final platform = _FakeAndroidPlatform();
+        final connection = platform.connectionFor('android-device');
+        connection.emitStatus(
+          const DeviceStatus(
+            type: BluetoothConnectionEventType.deviceConnected,
+            connected: true,
+            ready: true,
+            peripheralId: 'android-device',
+          ),
+        );
+
+        final ble = FoundationBle(
+          platform: platform,
+          setupTimeout: const Duration(milliseconds: 50),
+        );
+
+        final result = await ble.connect('android-device');
+
+        expect(result, same(connection));
+        expect(platform.reconnectedDeviceIds, isEmpty);
+
+        await ble.dispose();
+      },
+    );
+
+    test(
+      'Android connect always disposes stale connection before reconnect',
+      () async {
+        final platform = _FakeAndroidPlatform();
+        final ble = FoundationBle(
+          platform: platform,
+          setupTimeout: const Duration(milliseconds: 50),
+        );
+        final staleConnection =
+            ble.getDeviceConnection('android-device')
+                as _FakeAndroidBleConnection;
+        final replacementConnection =
+            platform.connectionFor('android-device')
+                as _FakeAndroidBleConnection;
+
+        platform.onReconnect = (_) {
+          expect(staleConnection.disposed, isTrue);
+          expect(replacementConnection.disposed, isFalse);
+        };
+        replacementConnection.onStatusRequested = () {
+          Future<void>.delayed(Duration.zero, () {
+            replacementConnection.emitStatus(
+              const DeviceStatus(
+                type: BluetoothConnectionEventType.deviceConnected,
+                connected: true,
+                ready: true,
+                peripheralId: 'android-device',
+              ),
+            );
+          });
+        };
+
+        final result = await ble.connect('android-device');
+
+        expect(result, same(replacementConnection));
+        expect(platform.reconnectedDeviceIds, <String>['android-device']);
+
+        await ble.dispose();
+      },
+    );
+
+    test('connect surfaces Android connection timeout', () async {
       final platform = _FakeAndroidPlatform();
       final ble = FoundationBle(
         platform: platform,
@@ -325,7 +446,7 @@ void main() {
           isA<BleSetupTimeoutException>().having(
             (BleSetupTimeoutException error) => error.message,
             'message',
-            'Pairing timed out',
+            'Device connection timed out',
           ),
         ),
       );
@@ -490,9 +611,6 @@ class _FakeBleConnection implements BleConnection {
 
   @override
   final String deviceId;
-
-  @override
-  final BleTransport transport = const BleTransport.gatt();
 
   final StreamController<Uint8List> _readController =
       StreamController<Uint8List>.broadcast();

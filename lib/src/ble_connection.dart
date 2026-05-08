@@ -1,12 +1,9 @@
 import 'dart:typed_data';
 
-import 'ble_transport.dart';
 import 'models/ble_status.dart';
 
 abstract interface class BleConnection {
   String get deviceId;
-
-  BleTransport get transport;
 
   DeviceStatus get lastDeviceStatus;
 
