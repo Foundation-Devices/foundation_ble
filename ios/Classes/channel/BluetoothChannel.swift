@@ -114,6 +114,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             }
         }
 
+        ensureBluetoothManager()
         setupAccessorySession()
     }
 
@@ -187,6 +188,8 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             )
             return
         }
+
+        ensureBluetoothManager()
 
         let bleConnection = getOrCreateDevice(deviceId: deviceId)
         if let peripheral = resolvePeripheral(deviceId: deviceId), let peripheralName = peripheral.name {
