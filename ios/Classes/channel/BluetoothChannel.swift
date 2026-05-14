@@ -78,6 +78,8 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             binaryMessenger: binaryMessenger
         )
 
+        ensureBluetoothManager()
+
         methodChannel?.setMethodCallHandler { [weak self] call, result in
             guard let self else {
                 result(FlutterError(code: "internal", message: "self deallocated", details: nil))
