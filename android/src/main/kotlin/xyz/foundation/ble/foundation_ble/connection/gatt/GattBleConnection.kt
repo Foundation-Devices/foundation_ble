@@ -52,6 +52,8 @@ class GattBleConnection(
     private var readCharacteristic: BluetoothGattCharacteristic? = null
     private var bleWriteQueue: BleWriteQueue? = null
     private var pendingRssiResult: MethodChannel.Result? = null
+    private var transportConnected = false
+    private var mtuRequested = false
 
     override fun isReady(): Boolean {
         return isConnected() && writeCharacteristic != null
@@ -59,15 +61,7 @@ class GattBleConnection(
 
     @SuppressLint("MissingPermission")
     override fun isConnected(): Boolean {
-        val device = connectedDevice ?: return false
-
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            bluetoothManager.getConnectionState(device, BluetoothProfile.GATT) ==
-                    BluetoothProfile.STATE_CONNECTED
-        } else {
-            @Suppress("DEPRECATION")
-            bluetoothGatt?.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED
-        }
+        return transportConnected && connectedDevice != null
     }
 
 
@@ -204,31 +198,13 @@ class GattBleConnection(
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    connectedDevice = gatt?.device
+                    val connectedGatt = gatt ?: return
+                    connectedDevice = connectedGatt.device
+                    transportConnected = true
+                    mtuRequested = false
                     bleWriteQueue?.restart()
 
-                    bluetoothGatt?.requestMtu(247)
-                    val highPriorityRequested = bluetoothGatt?.requestConnectionPriority(
-                        BluetoothGatt.CONNECTION_PRIORITY_HIGH
-                    ) ?: false
-                    Log.d(
-                        TAG,
-                        "[$deviceId] Requested CONNECTION_PRIORITY_HIGH for GATT: $highPriorityRequested"
-                    )
-
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        bluetoothGatt?.setPreferredPhy(
-                            BluetoothDevice.PHY_LE_2M,
-                            BluetoothDevice.PHY_LE_2M,
-                            BluetoothDevice.PHY_LE_2M
-                        )
-                        Log.d(TAG, "[$deviceId] Requested LE 2M PHY for GATT")
-                    }
-
-                    scope.launch {
-                        delay(BLUETOOTH_DISCOVERY_DELAY_MS)
-                        gatt?.discoverServices()
-                    }
+                    scheduleServiceDiscovery(connectedGatt)
                 }
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -259,11 +235,8 @@ class GattBleConnection(
             var read: BluetoothGattCharacteristic? = null
 
             if (resolvedGatt.services.isEmpty()) {
-                scope.launch {
-                    delay(BLUETOOTH_DISCOVERY_DELAY_MS)
-                    gatt.discoverServices()
-                }
-                return;
+                scheduleServiceDiscovery(resolvedGatt)
+                return
             }
             outer@ for (service in resolvedGatt.services) {
                 for (char in service.characteristics) {
@@ -309,7 +282,11 @@ class GattBleConnection(
 
             Log.d(TAG, "[$deviceId] write=${write.uuid} read=${read?.uuid}")
 
-            read?.let { configureReadCharacteristic(resolvedGatt, it) }
+            val descriptorWriteStarted =
+                read?.let { configureReadCharacteristic(resolvedGatt, it) } == true
+            if (!descriptorWriteStarted) {
+                requestMtu(resolvedGatt)
+            }
             sendConnectionEvent(BluetoothConnectionEventType.DEVICE_CONNECTED)
         }
 
@@ -392,6 +369,17 @@ class GattBleConnection(
                 characteristic?.value?.let(::sendBinaryData)
             }
         }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt?,
+            descriptor: BluetoothGattDescriptor?,
+            status: Int
+        ) {
+            super.onDescriptorWrite(gatt, descriptor, status)
+            if (!isStaleGattCallback(gatt) && gatt != null && descriptor?.uuid == CCCD_UUID) {
+                requestMtu(gatt)
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -403,7 +391,18 @@ class GattBleConnection(
 
     private fun isStaleGattCallback(gatt: BluetoothGatt?): Boolean {
         val activeGatt = bluetoothGatt
-        return gatt != null && activeGatt != null && gatt !== activeGatt
+        return gatt != null && gatt !== activeGatt
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun scheduleServiceDiscovery(gatt: BluetoothGatt) {
+        scope.launch {
+            delay(BLUETOOTH_DISCOVERY_DELAY_MS)
+            if (bluetoothGatt !== gatt || !isConnected()) {
+                return@launch
+            }
+            gatt.discoverServices()
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -411,6 +410,8 @@ class GattBleConnection(
         gatt: BluetoothGatt? = bluetoothGatt,
         closeGatt: Boolean
     ) {
+        transportConnected = false
+        mtuRequested = false
         bleWriteQueue?.cancel()
         bleWriteQueue = null
         writeCharacteristic = null
@@ -433,15 +434,15 @@ class GattBleConnection(
     private fun configureReadCharacteristic(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
-    ) {
+    ): Boolean {
         if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY == 0 &&
             characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE == 0
         ) {
-            return
+            return false
         }
 
         gatt.setCharacteristicNotification(characteristic, true)
-        val descriptor = characteristic.getDescriptor(CCCD_UUID) ?: return
+        val descriptor = characteristic.getDescriptor(CCCD_UUID) ?: return false
         val enableValue =
             if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) {
                 BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
@@ -450,12 +451,23 @@ class GattBleConnection(
             }
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(descriptor, enableValue)
+            return gatt.writeDescriptor(descriptor, enableValue) ==
+                    BluetoothGatt.GATT_SUCCESS
         } else {
             @Suppress("DEPRECATION")
             descriptor.value = enableValue
             @Suppress("DEPRECATION")
-            gatt.writeDescriptor(descriptor)
+            return gatt.writeDescriptor(descriptor)
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun requestMtu(gatt: BluetoothGatt) {
+        if (mtuRequested || bluetoothGatt !== gatt || !isConnected()) {
+            return
+        }
+
+        mtuRequested = true
+        gatt.requestMtu(247)
     }
 }
