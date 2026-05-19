@@ -3,7 +3,6 @@ package xyz.foundation.ble.foundation_ble.connection
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.util.Log
 import io.flutter.plugin.common.BasicMessageChannel
 import io.flutter.plugin.common.BinaryCodec
 import io.flutter.plugin.common.BinaryMessenger
