@@ -54,9 +54,10 @@ class GattBleConnection(
     private var pendingRssiResult: MethodChannel.Result? = null
     private var transportConnected = false
     private var mtuRequested = false
+    private var transportReady = false
 
     override fun isReady(): Boolean {
-        return isConnected() && writeCharacteristic != null
+        return isConnected() && writeCharacteristic != null && transportReady
     }
 
     @SuppressLint("MissingPermission")
@@ -67,6 +68,8 @@ class GattBleConnection(
 
     @SuppressLint("MissingPermission")
     override fun connect(device: BluetoothDevice) {
+        transportReady = false
+
         bluetoothGatt?.let { existingGatt ->
             existingGatt.disconnect()
             existingGatt.close()
@@ -168,6 +171,11 @@ class GattBleConnection(
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
             super.onMtuChanged(gatt, mtu, status)
+            if (isStaleGattCallback(gatt) || gatt == null) {
+                return
+            }
+
+            markTransportReady(gatt)
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt?, rssi: Int, status: Int) {
@@ -202,6 +210,7 @@ class GattBleConnection(
                     connectedDevice = connectedGatt.device
                     transportConnected = true
                     mtuRequested = false
+                    transportReady = false
                     bleWriteQueue?.restart()
 
                     scheduleServiceDiscovery(connectedGatt)
@@ -276,6 +285,7 @@ class GattBleConnection(
             }
 
             bleWriteQueue?.cancel()
+            transportReady = false
             bleWriteQueue = BleWriteQueue(resolvedGatt, write, CoroutineScope(Dispatchers.IO))
             writeCharacteristic = write
             readCharacteristic = read
@@ -287,7 +297,6 @@ class GattBleConnection(
             if (!descriptorWriteStarted) {
                 requestMtu(resolvedGatt)
             }
-            sendConnectionEvent(BluetoothConnectionEventType.DEVICE_CONNECTED)
         }
 
         @SuppressLint("MissingPermission")
@@ -412,6 +421,7 @@ class GattBleConnection(
     ) {
         transportConnected = false
         mtuRequested = false
+        transportReady = false
         bleWriteQueue?.cancel()
         bleWriteQueue = null
         writeCharacteristic = null
@@ -468,6 +478,21 @@ class GattBleConnection(
         }
 
         mtuRequested = true
-        gatt.requestMtu(247)
+        if (!gatt.requestMtu(247)) {
+            markTransportReady(gatt)
+        }
+    }
+
+    private fun markTransportReady(gatt: BluetoothGatt) {
+        if (bluetoothGatt !== gatt || !isConnected() || writeCharacteristic == null) {
+            return
+        }
+
+        if (transportReady) {
+            return
+        }
+
+        transportReady = true
+        sendConnectionEvent(BluetoothConnectionEventType.DEVICE_CONNECTED)
     }
 }
