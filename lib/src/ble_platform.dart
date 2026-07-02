@@ -60,6 +60,8 @@ abstract interface class IosAccessorySetupCapability {
 }
 
 abstract interface class AndroidBlePlatformCapability {
+  Future<bool> hasPermission();
+
   Future<void> pair(String deviceId);
 
   Future<int> getApiLevel();

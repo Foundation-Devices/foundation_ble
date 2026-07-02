@@ -80,6 +80,13 @@ class FoundationBle {
 
   Future<bool> requestBlePermissions() => platform.requestBlePermissions();
 
+  Future<bool?> hasPermission() {
+    final android = platform is AndroidBlePlatformCapability
+        ? platform as AndroidBlePlatformCapability
+        : null;
+    return android?.hasPermission() ?? Future.value(null);
+  }
+
   Future<bool> getBleAdapterState() => platform.getBleAdapterState();
 
   Future<bool?> requestEnableBle() {

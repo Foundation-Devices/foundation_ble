@@ -22,6 +22,20 @@ void main() {
       expect(platform.disposeCount, 1);
     });
 
+    test(
+      'hasPermission delegates to the Android platform capability',
+      () async {
+        final platform = _FakeAndroidPlatform(hasPermissionResult: false);
+        final ble = FoundationBle(platform: platform);
+
+        final hasPermission = await ble.hasPermission();
+
+        expect(hasPermission, isFalse);
+
+        await ble.dispose();
+      },
+    );
+
     test('startScan forwards optional mac and UUID filters', () async {
       final platform = _FakeAndroidPlatform();
       final ble = FoundationBle(platform: platform);
@@ -585,9 +599,14 @@ final class _FakeMacosPlatform extends _FakeBlePlatformBase {
 
 final class _FakeAndroidPlatform extends _FakeBlePlatformBase
     implements AndroidBlePlatformCapability {
-  _FakeAndroidPlatform() : super(BleTarget.android);
+  _FakeAndroidPlatform({this.hasPermissionResult = true})
+    : super(BleTarget.android);
 
   final List<String> pairedDeviceIds = <String>[];
+  final bool hasPermissionResult;
+
+  @override
+  Future<bool> hasPermission() async => hasPermissionResult;
 
   @override
   Future<int> getApiLevel() async => 34;
