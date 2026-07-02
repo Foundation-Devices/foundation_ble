@@ -101,6 +101,7 @@ class BluetoothChannel(
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "requestBlePermissions" -> requestBlePermissions(result)
+            "hasPermission" -> result.success(hasBlePermissions())
             "getBleAdapterState" -> result.success(bluetoothAdapter?.isEnabled == true)
             "enableBluetooth" -> enableBluetooth(result)
             "deviceName" -> getDeviceName(result)

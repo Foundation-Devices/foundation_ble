@@ -51,6 +51,8 @@ void main() {
             return true;
           case 'apiLevel':
             return 34;
+          case 'hasPermission':
+            return true;
           case 'requestBlePermissions':
             return true;
         }
@@ -65,12 +67,14 @@ void main() {
       final granted = await platform.requestBlePermissions();
       final knownDevices = await platform.getKnownDevices();
       final androidPlatform = platform as AndroidBlePlatformCapability;
+      final hasPermission = await androidPlatform.hasPermission();
       await androidPlatform.pair('device-a');
       final apiLevel = await androidPlatform.getApiLevel();
       final removed = await platform.removeDevice('device-a');
       await platform.dispose();
 
       expect(granted, isTrue);
+      expect(hasPermission, isTrue);
       expect(knownDevices, hasLength(1));
       expect(knownDevices.single.peripheralId, 'device-a');
       expect(apiLevel, 34);
@@ -78,13 +82,14 @@ void main() {
       expect(calls.map((call) => call.method), <String>[
         'requestBlePermissions',
         'getConnectedDevices',
+        'hasPermission',
         'pair',
         'apiLevel',
         'removeDevice',
       ]);
 
       final pairArguments = Map<String, Object?>.from(
-        calls[2].arguments as Map,
+        calls[3].arguments as Map,
       );
       expect(pairArguments['deviceId'], 'device-a');
     },

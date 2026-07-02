@@ -399,6 +399,11 @@ final class _AndroidMethodChannelBlePlatform
   }
 
   @override
+  Future<bool> hasPermission() async {
+    return await invokeMethod<bool>('hasPermission') ?? false;
+  }
+
+  @override
   Future<bool?> requestEnableBle() async {
     return invokeMethod<bool>('enableBluetooth');
   }
