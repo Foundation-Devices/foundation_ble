@@ -17,10 +17,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -84,6 +86,7 @@ class BluetoothChannel(
     private var isReceiverRegistered = false
     private var pendingPermissionResult: MethodChannel.Result? = null
     private var pendingEnableResult: MethodChannel.Result? = null
+    private var hasAttemptedBlePermissionRequest = false
     private var activeScanTargetMacId: String? = null
     private var activeScanServiceUuid: UUID? = null
     private var hasAttachedActivity = false
@@ -141,7 +144,15 @@ class BluetoothChannel(
         }
 
         val granted = grantResults.isNotEmpty() &&
-                grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+                grantResults.all { it == PackageManager.PERMISSION_GRANTED } &&
+                hasBlePermissions()
+        val hostActivity = activity
+        if (!granted &&
+            hostActivity != null &&
+            shouldOpenAppSettingsAfterPermissionResult(hostActivity, permissions, grantResults)
+        ) {
+            openAppSettings(hostActivity)
+        }
         pendingPermissionResult?.success(granted)
         pendingPermissionResult = null
         return true
@@ -195,7 +206,47 @@ class BluetoothChannel(
         }
 
         pendingPermissionResult = result
-        ActivityCompat.requestPermissions(hostActivity, permissions, REQUEST_BLE_PERMISSIONS_CODE)
+        hasAttemptedBlePermissionRequest = true
+        ActivityCompat.requestPermissions(
+            hostActivity,
+            permissions,
+            REQUEST_BLE_PERMISSIONS_CODE
+        )
+    }
+
+    private fun shouldOpenAppSettingsAfterPermissionResult(
+        hostActivity: Activity,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ): Boolean {
+        if (permissions.isEmpty() || grantResults.isEmpty()) {
+            return true
+        }
+
+        if (!hasAttemptedBlePermissionRequest) {
+            return false
+        }
+
+        return permissions.withIndex().any { (index, permission) ->
+            val grantResult = grantResults.getOrNull(index)
+            grantResult != PackageManager.PERMISSION_GRANTED &&
+                    !ActivityCompat.shouldShowRequestPermissionRationale(
+                        hostActivity,
+                        permission
+                    )
+        }
+    }
+
+    private fun openAppSettings(hostActivity: Activity) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+        }
+
+        try {
+            hostActivity.startActivity(intent)
+        } catch (error: Exception) {
+            Log.w(TAG, "Failed to open app settings: ${error.message}")
+        }
     }
 
     private fun enableBluetooth(result: MethodChannel.Result) {
@@ -737,6 +788,7 @@ class BluetoothChannel(
 
         pendingPermissionResult = null
         pendingEnableResult = null
+        hasAttemptedBlePermissionRequest = false
         activeScanTargetMacId = null
         activeScanServiceUuid = null
         scanEventSink = null
