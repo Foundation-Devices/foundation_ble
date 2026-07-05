@@ -43,8 +43,6 @@ import xyz.foundation.ble.foundation_ble.transport.SessionChannelNames
 
 class BluetoothChannel(
     private val context: Context,
-    activity: Activity,
-    activityBinding: ActivityPluginBinding,
     private val binaryMessenger: BinaryMessenger
 ) : MethodChannel.MethodCallHandler,
     BleConnectionCallback,
@@ -97,7 +95,6 @@ class BluetoothChannel(
     init {
         methodChannel.setMethodCallHandler(this)
         scanEventChannel.setStreamHandler(ScanStreamHandler())
-        attachToActivity(activity, activityBinding)
         setupBondingReceiver()
     }
 
@@ -175,6 +172,10 @@ class BluetoothChannel(
     }
 
     fun detachFromActivityForConfigChanges() {
+        detachActivity(cancelPendingResults = true)
+    }
+
+    fun detachFromActivity() {
         detachActivity(cancelPendingResults = true)
     }
 
