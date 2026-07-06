@@ -22,6 +22,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
   private let methodChannelName = "foundation_ble/bluetooth"
   private let bleScanStreamName = "foundation_ble/bluetooth/scan/stream"
+  private let bleLogStreamName = "foundation_ble/bluetooth/log/stream"
   private let primeUUID = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
   private let scanTimeoutSeconds: TimeInterval = 15
 
@@ -32,6 +33,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   private var permissionProbeManager: CBCentralManager?
   private var methodChannel: FlutterMethodChannel?
   private var scanEventSink: FlutterEventSink?
+  private var logEventSink: FlutterEventSink?
   private var pendingPermissionResult: FlutterResult?
   private var pendingScanResult: FlutterResult?
   private var pendingScanRequest: ScanRequest?
@@ -52,6 +54,9 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     FlutterEventChannel(name: bleScanStreamName, binaryMessenger: binaryMessenger)
       .setStreamHandler(ScanStreamHandler(bluetoothChannel: self))
+
+    FlutterEventChannel(name: bleLogStreamName, binaryMessenger: binaryMessenger)
+      .setStreamHandler(LogStreamHandler(bluetoothChannel: self))
 
     methodChannel = FlutterMethodChannel(
       name: methodChannelName,
@@ -95,6 +100,10 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   }
 
   func onDeviceDisconnected(device: BleConnection) {
+  }
+
+  func emitLog(type: String, message: String) {
+    sendLog(type: type, message: message)
   }
 
   func getCentralManager() -> CBCentralManager? {
@@ -554,6 +563,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     knownPeripherals.removeAll()
     knownPeripheralNames.removeAll()
     scanEventSink = nil
+    logEventSink = nil
     pendingPermissionResult = nil
     clearPendingScan()
     methodChannel?.setMethodCallHandler(nil)
@@ -676,6 +686,28 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     let send = { [weak self] in
       self?.scanEventSink?(payload)
+    }
+
+    if Thread.isMainThread {
+      send()
+    } else {
+      DispatchQueue.main.async {
+        send()
+      }
+    }
+  }
+
+  private func logBle(_ message: String) {
+    NSLog("[FoundationBle:macOS] %@", message)
+    sendLog(type: "DEBUG", message: message)
+  }
+
+  private func sendLog(type: String, message: String) {
+    let send = { [weak self] in
+      self?.logEventSink?([
+        "type": type,
+        "message": message,
+      ])
     }
 
     if Thread.isMainThread {
@@ -960,6 +992,26 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
       bluetoothChannel?.scanEventSink = nil
+      return nil
+    }
+  }
+
+  private class LogStreamHandler: NSObject, FlutterStreamHandler {
+    weak var bluetoothChannel: BluetoothChannel?
+
+    init(bluetoothChannel: BluetoothChannel) {
+      self.bluetoothChannel = bluetoothChannel
+    }
+
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
+      -> FlutterError?
+    {
+      bluetoothChannel?.logEventSink = events
+      return nil
+    }
+
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+      bluetoothChannel?.logEventSink = nil
       return nil
     }
   }

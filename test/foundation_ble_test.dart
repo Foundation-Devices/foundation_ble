@@ -497,7 +497,7 @@ abstract class _FakeBlePlatformBase extends BlePlatform
   Stream<BleScanEvent> get scanEvents => _scanEventsController.stream;
 
   @override
-  Stream<String> get logEvents => const Stream<String>.empty();
+  Stream<BleLogEvent> get logEvents => const Stream<BleLogEvent>.empty();
 
   @override
   Future<String> getDeviceName() async => 'Host Device';

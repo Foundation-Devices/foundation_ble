@@ -21,6 +21,7 @@ import xyz.foundation.ble.foundation_ble.util.BinaryChannelBuffers
 
 interface BleConnectionCallback {
     fun onDeviceDisconnected(device: BleConnection)
+    fun onLogMessage(type: String, message: String) {}
 }
 
 abstract class BleConnection(
@@ -220,6 +221,14 @@ abstract class BleConnection(
 
     protected fun onConnectionError(error: String?) {
         sendConnectionEvent(BluetoothConnectionEventType.CONNECTION_ERROR, error)
+    }
+
+    protected fun emitDebugLog(message: String) {
+        callback.onLogMessage("DEBUG", message)
+    }
+
+    protected fun emitTraceLog(message: String) {
+        callback.onLogMessage("TRACE", message)
     }
 
     protected fun onDeviceDisconnected(error: String? = null) {

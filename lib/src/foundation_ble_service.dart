@@ -5,6 +5,7 @@ import 'ble_exceptions.dart';
 import 'ble_platform.dart';
 import 'method_channel/method_channel_ble_platform.dart';
 import 'models/ble_device_info.dart';
+import 'models/ble_log_event.dart';
 import 'models/ble_scan_event.dart';
 import 'models/ble_status.dart';
 import 'models/ios_accessory_setup.dart';
@@ -38,7 +39,7 @@ class FoundationBle {
 
   Stream<BleScanEvent> get scanEvents => platform.scanEvents;
 
-  Stream<String> get logEvents => platform.logEvents;
+  Stream<BleLogEvent> get logEvents => platform.logEvents;
 
   BleConnection getDeviceConnection(String deviceId) {
     final existingConnection = _deviceConnections[deviceId];

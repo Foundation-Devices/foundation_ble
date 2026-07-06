@@ -165,7 +165,9 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             binaryMessenger: binaryMessenger,
             delegate: self,
             accessorySession: session,
-            logCallback: { [weak self] message in self?.emitLog(message) }
+            logCallback: { [weak self] type, message in
+                self?.emitLog(type: type, message: message)
+            }
         )
 
         if let peripheralName = knownPeripheralNames[deviceId] {
@@ -1748,10 +1750,28 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     private func logBle(_ message: String) {
         NSLog("[FoundationBle:iOS] %@", message)
-        logEventSink?(message)
+        sendLog(type: "DEBUG", message: message)
     }
 
-    func emitLog(_ message: String) {
-        logEventSink?(message)
+    func emitLog(type: String, message: String) {
+        sendLog(type: type, message: message)
+    }
+
+    private func sendLog(type: String, message: String) {
+        let payload = [
+            "type": type,
+            "message": message,
+        ]
+        let send = { [weak self] in
+            self?.logEventSink?(payload)
+        }
+
+        if Thread.isMainThread {
+            send()
+        } else {
+            DispatchQueue.main.async {
+                send()
+            }
+        }
     }
 }

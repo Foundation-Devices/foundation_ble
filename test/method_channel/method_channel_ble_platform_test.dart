@@ -24,6 +24,10 @@ void main() {
       'foundation_ble/bluetooth/scan/stream',
       null,
     );
+    binding.defaultBinaryMessenger.setMockMessageHandler(
+      'foundation_ble/bluetooth/log/stream',
+      null,
+    );
   });
 
   test(
@@ -265,6 +269,42 @@ void main() {
     expect(event.type, BluetoothConnectionEventType.deviceFound);
     expect(event.deviceId, 'scan-device');
     expect(event.deviceName, 'Prime Scan');
+  });
+
+  test('logEvents parses typed payloads from the event channel', () async {
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      methodChannel,
+      (MethodCall call) async => null,
+    );
+    binding.defaultBinaryMessenger.setMockMessageHandler(
+      'foundation_ble/bluetooth/log/stream',
+      (ByteData? message) async {
+        final call = methodCodec.decodeMethodCall(message);
+        if (call.method == 'listen') {
+          Future<void>.delayed(Duration.zero, () {
+            messenger.handlePlatformMessage(
+              'foundation_ble/bluetooth/log/stream',
+              methodCodec.encodeSuccessEnvelope(<String, Object?>{
+                'type': 'TRACE',
+                'message': 'connectGatt issued',
+              }),
+              (_) {},
+            );
+          });
+        }
+        return methodCodec.encodeSuccessEnvelope(null);
+      },
+    );
+
+    final platform = MethodChannelBlePlatform(
+      target: BleTarget.android,
+      binaryMessenger: messenger,
+    );
+
+    final event = await platform.logEvents.first;
+
+    expect(event.type, BleLogType.trace);
+    expect(event.message, 'connectGatt issued');
   });
 
   test(

@@ -3,6 +3,7 @@ export 'src/ble_exceptions.dart';
 export 'src/ble_platform.dart';
 export 'src/foundation_ble_service.dart';
 export 'src/models/ble_device_info.dart';
+export 'src/models/ble_log_event.dart';
 export 'src/models/ble_scan_event.dart';
 export 'src/models/ble_status.dart';
 export 'src/models/ios_accessory_setup.dart';
