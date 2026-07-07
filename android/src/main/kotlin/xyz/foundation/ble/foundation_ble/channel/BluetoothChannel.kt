@@ -43,8 +43,6 @@ import xyz.foundation.ble.foundation_ble.transport.SessionChannelNames
 
 class BluetoothChannel(
     private val context: Context,
-    activity: Activity,
-    activityBinding: ActivityPluginBinding,
     private val binaryMessenger: BinaryMessenger
 ) : MethodChannel.MethodCallHandler,
     BleConnectionCallback,
@@ -67,7 +65,10 @@ class BluetoothChannel(
         MethodChannel(binaryMessenger, channelNames.methodChannelName)
     private val scanEventChannel: EventChannel =
         EventChannel(binaryMessenger, channelNames.scanStreamName)
+    private val logEventChannel: EventChannel =
+        EventChannel(binaryMessenger, channelNames.logStreamName)
     private var scanEventSink: EventChannel.EventSink? = null
+    private var logEventSink: EventChannel.EventSink? = null
 
     private val bluetoothManager: BluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -97,7 +98,7 @@ class BluetoothChannel(
     init {
         methodChannel.setMethodCallHandler(this)
         scanEventChannel.setStreamHandler(ScanStreamHandler())
-        attachToActivity(activity, activityBinding)
+        logEventChannel.setStreamHandler(LogStreamHandler())
         setupBondingReceiver()
     }
 
@@ -122,6 +123,10 @@ class BluetoothChannel(
 
     override fun onDeviceDisconnected(device: BleConnection) {
         Log.d(TAG, "Device disconnected: ${device.deviceId}")
+    }
+
+    override fun onLogMessage(type: String, message: String) {
+        sendLog(type = type, message = message)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
@@ -175,6 +180,10 @@ class BluetoothChannel(
     }
 
     fun detachFromActivityForConfigChanges() {
+        detachActivity(cancelPendingResults = true)
+    }
+
+    fun detachFromActivity() {
         detachActivity(cancelPendingResults = true)
     }
 
@@ -374,6 +383,10 @@ class BluetoothChannel(
 
     @SuppressLint("MissingPermission")
     private fun reconnect(call: MethodCall, result: MethodChannel.Result) {
+        logInfo(
+            "reconnect deviceId=${call.argument<String>("deviceId")} " +
+                    "adapterEnabled=${bluetoothAdapter?.isEnabled == true}"
+        )
         if (!checkBluetoothPermissions()) {
             result.error("PERMISSION_ERROR", "Bluetooth permissions not granted", null)
             return
@@ -389,6 +402,11 @@ class BluetoothChannel(
             val adapter = bluetoothManager.adapter
             if (adapter == null) {
                 result.error("NO_ADAPTER", "Bluetooth adapter not available", null)
+                return
+            }
+            if (!adapter.isEnabled) {
+                logWarning("reconnect rejected; Bluetooth adapter is disabled")
+                result.error("BLUETOOTH_DISABLED", "Bluetooth is not enabled", null)
                 return
             }
 
@@ -703,6 +721,37 @@ class BluetoothChannel(
         }
     }
 
+    private inner class LogStreamHandler : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            logEventSink = events
+        }
+
+        override fun onCancel(arguments: Any?) {
+            logEventSink = null
+        }
+    }
+
+    private fun logInfo(message: String) {
+        Log.i(TAG, message)
+        sendLog(type = "DEBUG", message = message)
+    }
+
+    private fun logWarning(message: String) {
+        Log.w(TAG, message)
+        sendLog(type = "DEBUG", message = message)
+    }
+
+    private fun sendLog(type: String, message: String) {
+        scope.launch {
+            logEventSink?.success(
+                mapOf(
+                    "type" to type,
+                    "message" to message
+                )
+            )
+        }
+    }
+
     private fun hasBlePermissions(): Boolean {
         return requiredBlePermissions().all(::hasPermission)
     }
@@ -792,9 +841,11 @@ class BluetoothChannel(
         activeScanTargetMacId = null
         activeScanServiceUuid = null
         scanEventSink = null
+        logEventSink = null
         bondingReceiver = null
         methodChannel.setMethodCallHandler(null)
         scanEventChannel.setStreamHandler(null)
+        logEventChannel.setStreamHandler(null)
     }
 
     private fun detachActivity(cancelPendingResults: Boolean) {

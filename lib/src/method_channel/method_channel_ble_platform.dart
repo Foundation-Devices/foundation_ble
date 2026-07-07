@@ -168,7 +168,7 @@ abstract base class _MethodChannelBlePlatformBase
 
     _logEvents = _logEventChannel
         .receiveBroadcastStream()
-        .map((dynamic event) => event?.toString() ?? '')
+        .map(BleLogEvent.fromPayload)
         .asBroadcastStream();
   }
 
@@ -179,7 +179,7 @@ abstract base class _MethodChannelBlePlatformBase
   final EventChannel _logEventChannel;
 
   late final Stream<BleScanEvent> _scanEvents;
-  late final Stream<String> _logEvents;
+  late final Stream<BleLogEvent> _logEvents;
 
   @override
   final BleTarget target;
@@ -188,7 +188,7 @@ abstract base class _MethodChannelBlePlatformBase
   Stream<BleScanEvent> get scanEvents => _scanEvents;
 
   @override
-  Stream<String> get logEvents => _logEvents;
+  Stream<BleLogEvent> get logEvents => _logEvents;
 
   @override
   Future<String> getDeviceName() async {

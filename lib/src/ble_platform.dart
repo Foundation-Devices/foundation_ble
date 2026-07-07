@@ -1,6 +1,7 @@
 import 'ble_connection.dart';
 import 'method_channel/method_channel_ble_platform.dart';
 import 'models/ble_device_info.dart';
+import 'models/ble_log_event.dart';
 import 'models/ble_scan_event.dart';
 import 'models/ios_accessory_setup.dart';
 import 'platform_interface.dart';
@@ -24,7 +25,7 @@ abstract class BlePlatform extends PlatformInterface {
 
   Stream<BleScanEvent> get scanEvents;
 
-  Stream<String> get logEvents;
+  Stream<BleLogEvent> get logEvents;
 
   Future<String> getDeviceName();
 

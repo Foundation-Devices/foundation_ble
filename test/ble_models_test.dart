@@ -50,6 +50,25 @@ void main() {
       expect(event.deviceName, 'Prime');
     });
 
+    test('BleLogEvent parses typed and legacy payloads', () {
+      final trace = BleLogEvent.fromPayload(<String, Object?>{
+        'type': 'TRACE',
+        'message': 'connectGatt issued',
+      });
+      final debug = BleLogEvent.fromPayload(<String, Object?>{
+        'type': 'DEBUG',
+        'message': 'Bluetooth adapter is disabled',
+      });
+      final legacy = BleLogEvent.fromPayload('legacy log line');
+
+      expect(trace.type, BleLogType.trace);
+      expect(trace.message, 'connectGatt issued');
+      expect(debug.type, BleLogType.debug);
+      expect(debug.message, 'Bluetooth adapter is disabled');
+      expect(legacy.type, BleLogType.debug);
+      expect(legacy.message, 'legacy log line');
+    });
+
     test('IosAccessoryPickerItem serializes descriptor fields', () {
       final item = IosAccessoryPickerItem(
         id: 'prime-orange',

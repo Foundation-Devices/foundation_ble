@@ -6,6 +6,7 @@ protocol BleConnectionDelegate: AnyObject {
   func onDeviceDisconnected(device: BleConnection)
   func getCentralManager() -> CBCentralManager?
   func reconnect(device: BleConnection, result: @escaping FlutterResult)
+  func emitLog(type: String, message: String)
 }
 
 class BleConnection: NSObject, CBPeripheralDelegate {
@@ -187,6 +188,10 @@ class BleConnection: NSObject, CBPeripheralDelegate {
 
   func onConnectionError(_ message: String) {
     sendConnectionEvent(type: "connection_error", error: message)
+  }
+
+  func log(_ message: String) {
+    delegate?.emitLog(type: "TRACE", message: message)
   }
 
   func onDeviceDisconnected(error: String? = nil) {

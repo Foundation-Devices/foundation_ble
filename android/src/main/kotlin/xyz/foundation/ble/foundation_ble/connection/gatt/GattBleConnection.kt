@@ -68,6 +68,10 @@ class GattBleConnection(
 
     @SuppressLint("MissingPermission")
     override fun connect(device: BluetoothDevice) {
+        logInfo(
+            "connect() device=${device.address} " +
+                    "adapterEnabled=${bluetoothManager.adapter?.isEnabled == true}"
+        )
         transportReady = false
 
         bluetoothGatt?.let { existingGatt ->
@@ -82,17 +86,22 @@ class GattBleConnection(
         try {
             bluetoothGatt = device.connectGatt(
                 context,
-                true,
+                false,
                 gattCallback,
                 BluetoothDevice.TRANSPORT_LE
             )
 
             if (bluetoothGatt == null) {
+                logWarning("connectGatt returned null (adapter off or stack unavailable)")
                 onConnectionError("Failed to create GATT connection")
+            } else {
+                logInfo("connectGatt issued; awaiting onClientRegistered/onConnectionState")
             }
         } catch (error: SecurityException) {
+            logWarning("connectGatt security exception: ${error.message}")
             onConnectionError("Permission denied: ${error.message}")
         } catch (error: Exception) {
+            logWarning("connectGatt failed: ${error.message}")
             onConnectionError("Connection failed: ${error.message}")
         }
     }
@@ -238,7 +247,7 @@ class GattBleConnection(
             }
 
             val resolvedGatt = gatt ?: return
-            Log.i(TAG, "onServicesDiscovered: ${resolvedGatt.services.size}")
+            logInfo("onServicesDiscovered: ${resolvedGatt.services.size}")
 
             var write: BluetoothGattCharacteristic? = null
             var read: BluetoothGattCharacteristic? = null
@@ -276,7 +285,7 @@ class GattBleConnection(
             }
 
             if (write == null) {
-                Log.w(TAG, "[$deviceId] No writable characteristic found")
+                logWarning("[$deviceId] No writable characteristic found")
                 failConnection(
                     gatt = resolvedGatt,
                     message = "No writable characteristic found"
@@ -290,7 +299,7 @@ class GattBleConnection(
             writeCharacteristic = write
             readCharacteristic = read
 
-            Log.d(TAG, "[$deviceId] write=${write.uuid} read=${read?.uuid}")
+            logDebug("[$deviceId] write=${write.uuid} read=${read?.uuid}")
 
             val descriptorWriteStarted =
                 read?.let { configureReadCharacteristic(resolvedGatt, it) } == true
@@ -393,9 +402,24 @@ class GattBleConnection(
 
     @SuppressLint("MissingPermission")
     private fun failConnection(gatt: BluetoothGatt?, message: String) {
-        Log.w(TAG, "[$deviceId] $message")
+        logWarning("[$deviceId] $message")
         resetConnectionState(gatt = gatt, closeGatt = true)
         onConnectionError(message)
+    }
+
+    private fun logDebug(message: String) {
+        Log.d(TAG, message)
+        emitTraceLog(message)
+    }
+
+    private fun logInfo(message: String) {
+        Log.i(TAG, message)
+        emitTraceLog(message)
+    }
+
+    private fun logWarning(message: String) {
+        Log.w(TAG, message)
+        emitDebugLog(message)
     }
 
     private fun isStaleGattCallback(gatt: BluetoothGatt?): Boolean {

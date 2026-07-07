@@ -20,7 +20,7 @@ class BleConnection: NSObject, CBPeripheralDelegate {
 
   private weak var delegate: BleConnectionDelegate?
   private let accessorySession: ASAccessorySession?
-  private let logCallback: ((String) -> Void)?
+  private let logCallback: ((String, String) -> Void)?
 
   private let methodChannel: FlutterMethodChannel
   private let bleReadChannel: FlutterBasicMessageChannel
@@ -62,7 +62,7 @@ class BleConnection: NSObject, CBPeripheralDelegate {
     binaryMessenger: FlutterBinaryMessenger,
     delegate: BleConnectionDelegate,
     accessorySession: ASAccessorySession?,
-    logCallback: ((String) -> Void)? = nil
+    logCallback: ((String, String) -> Void)? = nil
   ) {
     self.deviceId = deviceId
     self.delegate = delegate
@@ -124,7 +124,7 @@ class BleConnection: NSObject, CBPeripheralDelegate {
   }
 
   func log(_ message: String) {
-    logCallback?(message)
+    logCallback?("TRACE", message)
   }
 
   func readRssi(result: @escaping FlutterResult) {

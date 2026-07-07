@@ -38,6 +38,7 @@ final class GattBleConnection: BleConnection {
 
   override func connect(peripheral: CBPeripheral) {
     if hasActiveOrPendingConnection(for: peripheral) {
+      log("connect skipped because connection is already active or pending deviceId=\(deviceId)")
       return
     }
 
@@ -51,15 +52,18 @@ final class GattBleConnection: BleConnection {
     if peripheral.state == .connecting {
       updateKnownPeripheral(peripheral)
       peripheral.delegate = self
+      log("connect using already connecting peripheral deviceId=\(deviceId)")
       return
     }
 
     if peripheral.state == .connected {
+      log("connect forwarding already connected peripheral deviceId=\(deviceId)")
       onDidConnect(peripheral: peripheral)
       return
     }
 
     sendConnectionEvent(type: "connection_attempt")
+    log("connect starting central connection deviceId=\(deviceId)")
 
     updateKnownPeripheral(peripheral)
     peripheral.delegate = self
@@ -123,6 +127,7 @@ final class GattBleConnection: BleConnection {
     if currentPeripheralMatches(peripheral) &&
       (deviceReady || isServiceDiscoveryInProgress)
     {
+      log("didConnect ignored because service discovery is already active deviceId=\(deviceId)")
       return
     }
 
@@ -137,6 +142,7 @@ final class GattBleConnection: BleConnection {
     isServiceDiscoveryInProgress = true
 
     peripheral.discoverServices(nil)
+    log("didConnect starting service discovery deviceId=\(deviceId)")
     sendConnectionEvent(type: "device_connected")
   }
 
@@ -146,6 +152,7 @@ final class GattBleConnection: BleConnection {
     }
 
     resetConnectionState(for: peripheral)
+    log("didFailToConnect deviceId=\(deviceId) error=\(error?.localizedDescription ?? "unknown")")
     onConnectionError(error?.localizedDescription ?? "Failed to connect to device")
   }
 
@@ -155,6 +162,7 @@ final class GattBleConnection: BleConnection {
     }
 
     resetConnectionState(for: peripheral)
+    log("didDisconnect deviceId=\(deviceId) error=\(error?.localizedDescription ?? "none")")
     onDeviceDisconnected(error: error?.localizedDescription)
   }
 
@@ -164,6 +172,7 @@ final class GattBleConnection: BleConnection {
     }
 
     if let error {
+      log("service discovery failed deviceId=\(deviceId) error=\(error.localizedDescription)")
       failConnection(
         peripheral: peripheral,
         message: "Service discovery failed: \(error.localizedDescription)"
@@ -176,6 +185,7 @@ final class GattBleConnection: BleConnection {
     }
 
     guard let services = peripheral.services, !services.isEmpty else {
+      log("service discovery returned no services deviceId=\(deviceId)")
       failConnection(
         peripheral: peripheral,
         message: "No GATT services discovered"
@@ -199,6 +209,7 @@ final class GattBleConnection: BleConnection {
     }
 
     if let error {
+      log("characteristic discovery failed deviceId=\(deviceId) error=\(error.localizedDescription)")
       failConnection(
         peripheral: peripheral,
         message: "Characteristic discovery failed: \(error.localizedDescription)"
@@ -291,6 +302,7 @@ final class GattBleConnection: BleConnection {
   private func finalizeCharacteristicDiscovery(for peripheral: CBPeripheral) {
     let services = peripheral.services ?? []
     guard let selection = resolveCharacteristicSelection(from: services) else {
+      log("no writable characteristic found deviceId=\(deviceId)")
       failConnection(
         peripheral: peripheral,
         message: "No writable GATT characteristic found"
@@ -307,6 +319,9 @@ final class GattBleConnection: BleConnection {
     readCharacteristic = selection.readCharacteristic
     deviceReady = true
     isServiceDiscoveryInProgress = false
+    log(
+      "gatt ready deviceId=\(deviceId) service=\(selection.serviceUUID.uuidString) write=\(selection.writeCharacteristic.uuid.uuidString) read=\(selection.readCharacteristic?.uuid.uuidString ?? "none")"
+    )
 
     configureReadCharacteristic(
       peripheral,
