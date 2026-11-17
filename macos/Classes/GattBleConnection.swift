@@ -84,6 +84,7 @@ final class GattBleConnection: BleConnection {
     result(["disconnecting": true])
   }
 
+  @MainActor
   override func handleBinaryWrite(data: Data) async -> Data {
     guard let peripheral = currentPeripheral,
           peripheral.state == .connected,

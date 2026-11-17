@@ -27,7 +27,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   private let scanTimeoutSeconds: TimeInterval = 15
 
   private let binaryMessenger: FlutterBinaryMessenger
-  private let bleQueue = DispatchQueue(label: "xyz.foundation.ble.macos", qos: .userInteractive)
 
   private var centralManager: CBCentralManager?
   private var permissionProbeManager: CBCentralManager?
@@ -120,7 +119,8 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
   private func ensureBluetoothManager() {
     if centralManager == nil {
-      centralManager = CBCentralManager(delegate: self, queue: bleQueue)
+      // Delegate callbacks run on main, the thread that owns all channel and connection state.
+      centralManager = CBCentralManager(delegate: self, queue: nil)
     }
   }
 
@@ -158,7 +158,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       self?.finishPermissionRequestIfNeeded(force: true)
     }
     permissionTimeoutWorkItem = workItem
-    bleQueue.asyncAfter(deadline: .now() + 10, execute: workItem)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: workItem)
   }
 
   private func cancelPermissionRequestTimeout() {
@@ -684,17 +684,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       payload["deviceName"] = deviceName
     }
 
-    let send = { [weak self] in
-      self?.scanEventSink?(payload)
-    }
-
-    if Thread.isMainThread {
-      send()
-    } else {
-      DispatchQueue.main.async {
-        send()
-      }
-    }
+    scanEventSink?(payload)
   }
 
   private func logBle(_ message: String) {
@@ -703,20 +693,10 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
   }
 
   private func sendLog(type: String, message: String) {
-    let send = { [weak self] in
-      self?.logEventSink?([
-        "type": type,
-        "message": message,
-      ])
-    }
-
-    if Thread.isMainThread {
-      send()
-    } else {
-      DispatchQueue.main.async {
-        send()
-      }
-    }
+    logEventSink?([
+      "type": type,
+      "message": message,
+    ])
   }
 
   private func buildKnownDeviceEntries() -> [[String: Any]] {
@@ -869,7 +849,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
       self?.stopScanInternal(sendEvent: true)
     }
     scanTimeoutWorkItem = workItem
-    bleQueue.asyncAfter(deadline: .now() + scanTimeoutSeconds, execute: workItem)
+    DispatchQueue.main.asyncAfter(deadline: .now() + scanTimeoutSeconds, execute: workItem)
   }
 
   private func stopScanInternal(sendEvent: Bool) {
