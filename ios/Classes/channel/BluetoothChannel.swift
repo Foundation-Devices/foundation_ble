@@ -34,7 +34,6 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     private let assetKeyResolver: AssetKeyResolver
     private let binaryMessenger: FlutterBinaryMessenger
-    private let bleQueue = DispatchQueue(label: "xyz.foundation.ble", qos: .userInteractive)
 
     private var centralManager: CBCentralManager?
     private var methodChannel: FlutterMethodChannel?
@@ -141,9 +140,10 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
     private func ensureBluetoothManager() {
         if centralManager == nil {
+            // Delegate callbacks run on main, the thread that owns all channel and connection state.
             centralManager = CBCentralManager(
                 delegate: self,
-                queue: bleQueue,
+                queue: nil,
                 options: [
                     CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier
                 ]
@@ -369,20 +369,22 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
 
         if let accessory, let session {
             session.removeAccessory(accessory) { [weak self] error in
-                if let error {
-                    result(
-                        FlutterError(
-                            code: "REMOVE_ACCESSORY_FAILED",
-                            message: "Failed to remove accessory",
-                            details: error.localizedDescription
+                DispatchQueue.main.async {
+                    if let error {
+                        result(
+                            FlutterError(
+                                code: "REMOVE_ACCESSORY_FAILED",
+                                message: "Failed to remove accessory",
+                                details: error.localizedDescription
+                            )
                         )
-                    )
-                    return
-                }
+                        return
+                    }
 
-                finalizeRemoval()
-                self?.emitAccessoryRemovedEvent(accessory: accessory)
-                result(true)
+                    finalizeRemoval()
+                    self?.emitAccessoryRemovedEvent(accessory: accessory)
+                    result(true)
+                }
             }
             return
         }
@@ -512,13 +514,11 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
         reconnectionAttempts += 1
         reconnectionTimer?.invalidate()
         let delay = min(pow(2.0, Double(reconnectionAttempts)), 30.0)
-        DispatchQueue.main.async { [weak self] in
-            self?.reconnectionTimer = Timer.scheduledTimer(
-                withTimeInterval: delay,
-                repeats: false
-            ) { [weak self] _ in
-                self?.attemptReconnection()
-            }
+        reconnectionTimer = Timer.scheduledTimer(
+            withTimeInterval: delay,
+            repeats: false
+        ) { [weak self] _ in
+            self?.attemptReconnection()
         }
     }
 
@@ -967,17 +967,7 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
             payload["deviceName"] = deviceName
         }
 
-        let send = { [weak self] in
-            self?.scanEventSink?(payload)
-        }
-
-        if Thread.isMainThread {
-            send()
-        } else {
-            DispatchQueue.main.async {
-                send()
-            }
-        }
+        scanEventSink?(payload)
     }
 
     private func buildKnownDeviceEntries() -> [[String: Any]] {
@@ -1758,20 +1748,9 @@ class BluetoothChannel: NSObject, CBCentralManagerDelegate, BleConnectionDelegat
     }
 
     private func sendLog(type: String, message: String) {
-        let payload = [
+        logEventSink?([
             "type": type,
             "message": message,
-        ]
-        let send = { [weak self] in
-            self?.logEventSink?(payload)
-        }
-
-        if Thread.isMainThread {
-            send()
-        } else {
-            DispatchQueue.main.async {
-                send()
-            }
-        }
+        ])
     }
 }

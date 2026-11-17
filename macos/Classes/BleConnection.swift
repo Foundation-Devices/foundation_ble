@@ -102,6 +102,7 @@ class BleConnection: NSObject, CBPeripheralDelegate {
     fatalError("Subclasses must override disconnectTransport(result:)")
   }
 
+  @MainActor
   func handleBinaryWrite(data: Data) async -> Data {
     fatalError("Subclasses must override handleBinaryWrite(data:)")
   }
@@ -162,28 +163,11 @@ class BleConnection: NSObject, CBPeripheralDelegate {
       return
     }
 
-    let send = { sink(connectionData) }
-    if Thread.isMainThread {
-      send()
-    } else {
-      DispatchQueue.main.async {
-        send()
-      }
-    }
+    sink(connectionData)
   }
 
   func sendBinaryData(_ data: Data) {
-    let send = { [weak self] in
-      self?.bleReadChannel.sendMessage(data) { _ in }
-    }
-
-    if Thread.isMainThread {
-      send()
-    } else {
-      DispatchQueue.main.async {
-        send()
-      }
-    }
+    bleReadChannel.sendMessage(data) { _ in }
   }
 
   func onConnectionError(_ message: String) {
@@ -206,18 +190,8 @@ class BleConnection: NSObject, CBPeripheralDelegate {
     isCleanedUp = true
 
     cleanupTransport()
-
-    let clearHandlers = {
-      self.methodChannel.setMethodCallHandler(nil)
-      self.bleWriteChannel.setMessageHandler(nil)
-    }
-
-    if Thread.isMainThread {
-      clearHandlers()
-    } else {
-      DispatchQueue.main.async(execute: clearHandlers)
-    }
-
+    methodChannel.setMethodCallHandler(nil)
+    bleWriteChannel.setMessageHandler(nil)
     clearConnectionState()
     connectionEventSink = nil
     needsToResendConnectionState = nil
@@ -228,13 +202,6 @@ class BleConnection: NSObject, CBPeripheralDelegate {
   }
 
   private func setupChannelHandlers() {
-    if !Thread.isMainThread {
-      DispatchQueue.main.async { [weak self] in
-        self?.setupChannelHandlers()
-      }
-      return
-    }
-
     methodChannel.setMethodCallHandler { [weak self] call, result in
       guard let self else {
         result(FlutterError(code: "DEALLOCATED", message: "BleConnection deallocated", details: nil))
@@ -251,16 +218,14 @@ class BleConnection: NSObject, CBPeripheralDelegate {
         return
       }
 
-      Task { [weak self] in
+      Task { @MainActor [weak self] in
         guard let self else {
-          DispatchQueue.main.async { reply(Data()) }
+          reply(Data())
           return
         }
 
         let replyStatus = await self.handleBinaryWrite(data: data)
-        DispatchQueue.main.async {
-          reply(replyStatus)
-        }
+        reply(replyStatus)
       }
     }
   }
