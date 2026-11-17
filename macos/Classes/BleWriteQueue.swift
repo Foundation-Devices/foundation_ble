@@ -7,7 +7,7 @@ final class BleWriteQueue: @unchecked Sendable {
     case withoutResponse
   }
 
-  static let connectionBufferWaitTimeMs = 15
+  static let readyTimeout: DispatchTimeInterval = .seconds(2)
 
   private let peripheral: CBPeripheral
   private let characteristic: CBCharacteristic
@@ -73,16 +73,12 @@ final class BleWriteQueue: @unchecked Sendable {
               return
             }
 
-            if !success {
-              self.isActive = false
-              request.completion(false)
-              self.clearQueue()
-              self.isProcessing = false
-              return
-            }
-
-            request.completion(true)
+            request.completion(success)
             self.currentRequest = nil
+
+            if !success {
+              self.clearQueue()
+            }
 
             if !self.writeQueue.isEmpty {
               self.processQueue()
@@ -94,18 +90,6 @@ final class BleWriteQueue: @unchecked Sendable {
 
         return
       }
-    }
-  }
-
-  func restart() {
-    queue.async { [weak self] in
-      guard let self, !self.isActive else { return }
-      self.queueGeneration &+= 1
-      self.failPendingWrite()
-      self.isActive = true
-      self.currentRequest = nil
-      self.clearQueue()
-      self.startProcessingQueue()
     }
   }
 
@@ -159,7 +143,8 @@ final class BleWriteQueue: @unchecked Sendable {
       guard self.isActive,
             self.pendingWriteMode == .withoutResponse,
             let generation = self.pendingWriteGeneration,
-            self.queueGeneration == generation
+            self.queueGeneration == generation,
+            self.peripheral.canSendWriteWithoutResponse
       else {
         return
       }
@@ -231,7 +216,7 @@ final class BleWriteQueue: @unchecked Sendable {
           self.pendingWriteMode = .withoutResponse
           self.pendingWriteData = data
           self.pendingWriteGeneration = generation
-          self.scheduleReadyTimeout(generation: generation)
+          self.scheduleReadyTimeout()
           return
         }
 
@@ -241,36 +226,16 @@ final class BleWriteQueue: @unchecked Sendable {
     }
   }
 
-  private func scheduleReadyTimeout(generation: UInt64) {
+  private func scheduleReadyTimeout() {
     readyTimeoutWorkItem?.cancel()
 
+    // A write without response sent while canSendWriteWithoutResponse is false can be dropped silently.
     let workItem = DispatchWorkItem { [weak self] in
-      guard let self,
-            self.isActive,
-            self.pendingWriteMode == .withoutResponse,
-            let pendingGeneration = self.pendingWriteGeneration,
-            self.queueGeneration == generation,
-            pendingGeneration == generation,
-            let pendingWrite = self.takePendingWrite(),
-            let data = pendingWrite.data
-      else {
-        return
-      }
-
-      guard self.peripheral.state != .disconnected else {
-        pendingWrite.continuation.resume(returning: false)
-        return
-      }
-
-      self.peripheral.writeValue(data, for: self.characteristic, type: .withoutResponse)
-      pendingWrite.continuation.resume(returning: true)
+      self?.failPendingWrite()
     }
 
     readyTimeoutWorkItem = workItem
-    queue.asyncAfter(
-      deadline: .now() + .milliseconds(Self.connectionBufferWaitTimeMs),
-      execute: workItem
-    )
+    queue.asyncAfter(deadline: .now() + Self.readyTimeout, execute: workItem)
   }
 
   private func takePendingWrite() -> (
